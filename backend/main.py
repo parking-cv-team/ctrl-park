@@ -2,7 +2,7 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 import os
 from dotenv import load_dotenv
-from ..db import init_db, SessionLocal, CameraSource, ProcessedFrame  
+from db import init_db, SessionLocal, CameraSource, ProcessedFrame  
 
 load_dotenv()
 
