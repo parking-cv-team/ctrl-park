@@ -1,0 +1,9 @@
+fastapi
+uvicorn[standard]
+sqlalchemy
+aiofiles
+pydantic
+streamlit
+opencv-python
+python-dotenv
+pymysql
