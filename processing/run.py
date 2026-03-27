@@ -15,13 +15,16 @@ def main():
     #   camera_uri = os.getenv("CAMERA_URI", "video/TestVideo.mp4")  
     #   Otherwise, for a camera via actual protocol: rtsp://example.com/stream
 
+    # Parse arguments given through CLI or .env file 
     parser = argparse.ArgumentParser(description="Parking detection pipeline")
     parser.add_argument(
         "--video",
         default=os.getenv("CAMERA_URI", "video/TestVideo.mp4"),
         help="Video file or stream URI (default: CAMERA_URI env var or video/TestVideo.mp4)",
     )
+
     args = parser.parse_args()
+
     camera_uri = args.video
 
     # Zone annotation — blocks until the user saves the JSON or quits
@@ -31,6 +34,8 @@ def main():
         return
     print(f"[run] Zones loaded from {zones_path}. Starting pipeline...")
 
+    print("aborting anyways lol (everything else is still to be completed)")
+    return
 
     frame_queue = Queue()
     worker_thread = threading.Thread(

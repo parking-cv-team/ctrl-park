@@ -1,16 +1,25 @@
-"""Tkinter-based 4-point parking slot annotator.
+"""4-point parking slot annotator.
 
 Extracts the first frame from a video file and displays it as the annotation
 canvas. Click exactly 4 points to define each parking zone; a dialog will ask
 for the zone name and category. Repeat for every spot, then click Save.
 
-The output JSON is compatible with the database Zone model:
+JSON Output Structure:
   { "source": str, "frame_width": int, "frame_height": int,
     "zones": [ {"name": str, "polygon": [[x,y],...], "category": str|null} ] }
-
+Up until now this should be the standard format of Zones
+    
 Usage:
+    On CLI (manually)
     python -m processing.draw_zones --video video/testfile.mp4
     python -m processing.draw_zones --video foo.mp4 --out data/zones/custom.json
+
+    On Pipeline:
+    Import launch and write 'launch_zone_drawer(camera_uri)' where camera_uri is a with valid RTSP/HTTP camera URI 
+    or a directory to a .mp4 file
+
+We declare that this is a modified version of the ParkingPtsSelection file from Ultralytics' solution module.
+For more details about the original version see https://docs.ultralytics.com/guides/parking-management/
 """
 
 from __future__ import annotations
