@@ -18,7 +18,7 @@ def capture_stream(uri: str, out_queue: Queue):
     logging_enabled = os.getenv("USE_LOGGING", "False").lower() == "true"
     max_queue_size = int(os.getenv("MAX_QUEUE_SIZE", "200"))
     queue_threshold = int(os.getenv("QUEUE_RESTART_THRESHOLD", str(max_queue_size // 2)))
-    time_sleep = int(os.getenv("SLEEP_TIME", "1"))
+    time_sleep = float(os.getenv("SLEEP_TIME", "1.0"))
 
     if logging_enabled: 
         # logging for debugging purposes, should be removed in the final version
