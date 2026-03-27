@@ -1,16 +1,91 @@
 import time
 from queue import Queue
 import os
+from datetime import datetime, timedelta
 from dotenv import load_dotenv
 from db import SessionLocal, CameraSource, Zone, Detection, ZoneOccupancy
 
 load_dotenv()
 
+detection_tracker = {}
+def filter_detections(detections):
+    detection_results = []
 
-def process_frame(camera_uri, frame, timestamp, frame_id):
-    # TODO: this is a placeholder
-    h, w = frame.shape[:2]
-    return {"h": h, "w": w, "timestamp": timestamp, "frame_id": frame_id}
+    for det in detections:
+        if det.confidence < 0.75:
+            continue
+        if det.tracker_id not in detection_tracker:
+            detection_tracker[det.tracker_id] = {
+                "timestamp": det.timestamp,
+                "x1": det.x1,
+                "y1": det.y1,
+                "x2": det.x2,
+                "y2": det.y2,
+            }
+            detection_results.append(det)
+            continue
+        if (
+            detection_tracker[det.tracker_id]["timestamp"] - det.timestamp
+        ).seconds() < 1:
+            continue
+        if (
+            abs(detection_tracker[det.tracker_id]["x1"] - det.x1) > 10
+            or abs(detection_tracker[det.tracker_id]["y1"] - det.y1) > 10
+            or abs(detection_tracker[det.tracker_id]["x2"] - det.x2) > 10
+            or abs(detection_tracker[det.tracker_id]["y2"] - det.y2) > 10
+        ):
+            detection_tracker[det.tracker_id] = {
+                "timestamp": det.timestamp,
+                "x1": det.x1,
+                "y1": det.y1,
+                "x2": det.x2,
+                "y2": det.y2,
+            }
+            detection_results.append(det)
+            continue
+    return detection_results
+
+
+occupancy_timers = {}
+def filter_occupancies(occupancies):
+    occupancy_results = []
+    for occ in occupancies:
+        if occ.zone_id not in occupancy_timers:
+            occupancy_timers[occ.zone_id] = {
+                "tracker_id": occ.tracker_id,
+                "new_tracker_id": None,
+                "new_tracker_timestamp": None,
+            }
+            occupancy_results.append(occ)
+            continue
+        if (
+            occupancy_timers[occ.zone_id]["tracker_id"] != occ.tracker_id
+            and occupancy_timers[occ.zone_id]["new_tracker_id"] != occ.tracker_id
+        ):
+            occupancy_timers[occ.zone_id]["new_tracker_id"] = occ.tracker_id
+            occupancy_timers[occ.zone_id]["new_tracker_timestamp"] = occ.timestamp
+        elif occupancy_timers[occ.zone_id]["tracker_id"] == occ.tracker_id:
+            occupancy_timers[occ.zone_id]["new_tracker_id"] = None
+            occupancy_timers[occ.zone_id]["new_tracker_timestamp"] = None
+        if occupancy_timers[occ.zone_id]["new_tracker_timestamp"] and occupancy_timers[
+            occ.zone_id
+        ]["new_tracker_timestamp"] - occ.timestamp < timedelta(minutes=2):
+            occupancy_timers[occ.zone_id]["tracker_id"] = occ.tracker_id
+            occupancy_timers[occ.zone_id]["new_tracker_id"] = None
+            occupancy_timers[occ.zone_id]["new_tracker_timestamp"] = None
+            occupancy_results.append(occ) #maybe offset the 2 minutes by altering the timestamp?
+            continue
+
+    return occupancy_results
+
+
+def process_frame(camera_uri, detections, occupancies, timestamp, frame_id):
+    
+    #clear old trackers from object that have left the scene
+    cutoff = datetime.utcnow() - timedelta(seconds=10)
+    for tid in list(detection_tracker.keys()):
+        if detection_tracker[tid]["timestamp"] <= cutoff:
+            del detection_tracker[tid]
 
 
 def processing_loop(in_queue: Queue):

@@ -20,6 +20,7 @@ class Zone(Base):
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String(64), unique=True, nullable=False, index=True)
     polygon = Column(JSON, nullable=False)
+    category = Column(String(32), nullable=True) #parking lot | road | etc
 
     occupancies = relationship("ZoneOccupancy", back_populates="zone")
     detections = relationship("Detection", back_populates="zone")
@@ -63,6 +64,7 @@ class ZoneOccupancy(Base):
 
     detection_id = Column(Integer, ForeignKey("detections.id"), nullable=False)
     zone_id = Column(Integer, ForeignKey("zones.id"), nullable=False, index=True)
+    tracker_id = Column(Integer, nullable=True)
 
     detection = relationship("Detection", back_populates="zone_occupancies")
     zone = relationship("Zone", back_populates="occupancies")
