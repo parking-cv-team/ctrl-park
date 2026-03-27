@@ -1,7 +1,7 @@
 import argparse
 import cv2
 import supervision as sv
-from detect_frame import detect_frame_dual
+from detect_frame import detect_frame_dual as detect
 
 # RUN THIS BY WRITING THE FOLLOWING ON COMMAND PROMPT:
 # python SCRIPT_detect_video.py --video <insert_video_path>
@@ -32,7 +32,7 @@ def main():
         if not ret:
             break
 
-        cars, peds = detect_frame_dual(frame)
+        cars, peds = detect(frame)
 
         annotated = box_annotator.annotate(frame.copy(), detections=cars)
         annotated = box_annotator.annotate(annotated, detections=peds)

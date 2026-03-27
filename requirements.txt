@@ -8,6 +8,6 @@ opencv-python
 python-dotenv
 pymysql
 cryptography
-cv2
+opencv-python
 ultralytics
 rfdetr

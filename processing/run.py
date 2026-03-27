@@ -34,8 +34,8 @@ def main():
         return
     print(f"[run] Zones loaded from {zones_path}. Starting pipeline...")
 
-    print("aborting anyways lol (everything else is still to be completed)")
-    return
+    # print("aborting anyways lol (everything else is still to be completed)")
+    # return
 
     frame_queue = Queue()
     worker_thread = threading.Thread(
