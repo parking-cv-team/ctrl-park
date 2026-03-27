@@ -16,7 +16,8 @@ python -m processing.run
 ### Draw new zones
 python -m processing.draw_zones [options] --uri <\your uri>
 
-    -a --add   to add to the existing zones, specification of the uri is obligatory
+    -a --add        to add to the existing zones, specification of the uri is obligatory
+    -r --remove     to remove one or more given zones from a given setup, specification of the uri is obligatory
 
 ### Manual Testing
 Add Camera:
