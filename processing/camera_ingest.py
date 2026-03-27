@@ -14,13 +14,25 @@ def capture_stream(uri: str, out_queue: Queue):
         raise RuntimeError(f"Cannot open stream: {uri}")
 
     count = 0
-    while True:
-        ret, frame = cap.read()
-        if not ret:
-            break
-        out_queue.put((uri, frame, time.time(), count))
-        count += 1
+    log_path = os.getenv("QUEUE_SIZE_LOG_PATH", "queue_size.log")
 
-    cap.release()
-    # signal end, arbirtrarily encoded by yours truly, probably needs chaning, so TODO
+    logfile = open(log_path, "a", encoding="utf-8", buffering=1)
+
+    def _log_queue_size(size):
+        logfile.write(f"{time.time():.3f},{uri},{size}\n")
+        logfile.flush()
+
+    try:
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                break
+            out_queue.put((uri, frame, time.time(), count))
+            _log_queue_size(out_queue.qsize())
+            count += 1
+    finally:
+        logfile.close()
+        cap.release()
+
+    # signal end, arbitrarily encoded by yours truly, probably needs chaning, so TODO
     out_queue.put((uri, None, None, None))
