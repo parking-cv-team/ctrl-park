@@ -103,13 +103,16 @@ def _mouse_callback(event: int, x: int, y: int, flags: int, state: dict) -> None
 
 
 def draw_loop(state,base_frame,counter=0,window=_WINDOW):
+    
+    # funzione per il loop di disegno
+
 
     while True:
         # Auto-close after 4 clicks
         if len(state["pending"]) == _VERTICES_PER_SLOT:
             slot_idx = len(state["completed"])
             default_name = f"slot_{slot_idx}"
-            name = getNewName(counter)
+            name = get_new_name(counter)
             if not name:
                 name = default_name
             polygon = np.array(state["pending"], dtype=np.int32)
@@ -155,7 +158,7 @@ def draw_loop(state,base_frame,counter=0,window=_WINDOW):
     return state
 
 def draw_parking_from_scratch(uri, base_frame,out,state: dict = {"pending": [], "completed": [], "redraw": True},counter=0) -> None:
-    
+    # funzione per cominciare il draw loop
     
     out_path = Path(out) if out else _default_config_path(uri)
 
@@ -192,7 +195,7 @@ def draw_parking_from_scratch(uri, base_frame,out,state: dict = {"pending": [], 
     print(f"\n[draw_zones] Saved {len(config.zones)} zone(s) to {out_path}")
 
 
-def getNewName(counter):
+def get_new_name(counter):
     """
     TODO:
     da determinare metodo per differenziare telecamere diverse per suffissi diversi / determinare che si tratta dello stesso spot di un'altra telecamera
@@ -201,13 +204,20 @@ def getNewName(counter):
     
     return "A"+str(counter)
 
-def add_zones(uri, base_frame,out):
+def add_zones(uri):
+    # funzione per aggiungere zone ad uno stream a cui sono già state assegnate delle zone
 
-    zones_path = Path("parking_slots") / (Path(uri).stem + ".json")
+    cap = cv2.VideoCapture(uri)
+    if not cap.isOpened():
+        raise RuntimeError(f"Cannot open stream: {uri}")
+    ret, base_frame = cap.read()
+    cap.release()
+
+    zones_path = get_zones_path_from_uri(uri)
 
     if not zones_path.exists():
         print(f"[demo_pipeline] No zone config found at {zones_path}. Drawing zones now.")
-        draw_parking_from_scratch(uri, frame, str(zones_path))
+        draw_parking_from_scratch(uri, base_frame, str(zones_path))
         if not zones_path.exists():
             return None
         
@@ -220,13 +230,13 @@ def add_zones(uri, base_frame,out):
         state["completed"].append(SlotZone(name=i.name, polygon=polygon))
         _draw_state(base_frame, state["completed"], state["pending"])
     counter = extract_counter_from_name(last_name) + 1
-    draw_parking_from_scratch(uri,base_frame,out,state=state,counter=counter)
-
-    pass
+    draw_parking_from_scratch(uri,base_frame,str(zones_path),state=state,counter=counter)
 
 
-def remove_zones(uri,zones, out):
-    zones_path = Path("parking_slots") / (Path(uri).stem + ".json")
+def remove_zones(uri,zones):
+    # funzione per "rimozione" di zone selezionate
+
+    zones_path = get_zones_path_from_uri(uri)
 
     if not zones_path.exists():
         print(f"[demo_pipeline] No zone config found at {zones_path}.")    
@@ -247,10 +257,11 @@ def remove_zones(uri,zones, out):
         frame_height=zone_config.frame_height,
         zones=state["completed"],
     )
-    save_zone_config(config, out)
+    save_zone_config(config, str(zones_path))
 
 
 def visualize(uri):
+    # funzione per visualizzare uno stream con le zone che gli si sono state assegnate, se non ci sono zone assegnate è solo lo stream
     window = "visualize"
     zones_path = Path("parking_slots") / (Path(uri).stem + ".json")
     zones = []
@@ -302,13 +313,20 @@ def visualize(uri):
     cv2.destroyWindow(window)
     pass
 
+
 def extract_counter_from_name(name):
+    # TODO:
+    #    quando abbiamo una convenzione per la nomenclatura questo ragazzone va cambiato
     return int(name.split("A")[1])
+
+
+def get_zones_path_from_uri(uri):
+    return Path("parking_slots") / (Path(uri).stem + ".json")
+
 
 if __name__ == "__main__":
     import argparse
-    import optparse
-    from .camera_ingest import get_parking_zones
+    
     parser = argparse.ArgumentParser(
         description="Check parking slot occupancy from a zone config + video",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
@@ -323,20 +341,22 @@ if __name__ == "__main__":
     
     if args.uri:
         uri = str(args.uri)
-        cap = cv2.VideoCapture(uri)
-        if not cap.isOpened():
-            raise RuntimeError(f"Cannot open stream: {uri}")
-        ret, frame = cap.read()
-        cap.release()
-        if ret:
-            zones_path = Path("parking_slots") / (Path(uri).stem + ".json")
-            if args.add:
-                add_zones(uri,frame,str(zones_path))
-            elif args.remove:
-                remove_zones(uri,args.remove,str(zones_path))
-            elif args.visualize:
-                visualize(uri);
-            else:
+        
+        
+        if args.add:
+            add_zones(uri)
+        elif args.remove:
+            remove_zones(uri,args.remove)
+        elif args.visualize:
+            visualize(uri);
+        else:
+            cap = cv2.VideoCapture(uri)
+            if not cap.isOpened():
+                raise RuntimeError(f"Cannot open stream: {uri}")
+            ret, frame = cap.read()
+            cap.release()
+            if ret:
+                zones_path = get_zones_path_from_uri(uri)
                 draw_parking_from_scratch(uri, frame, str(zones_path))
     else:
         pass
