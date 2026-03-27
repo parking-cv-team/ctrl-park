@@ -2,7 +2,7 @@ import time
 from queue import Queue
 import os
 from dotenv import load_dotenv
-from db import SessionLocal, CameraSource, ProcessedFrame
+from db import SessionLocal, CameraSource, Zone, Detection, ZoneOccupancy
 
 load_dotenv()
 
@@ -35,8 +35,11 @@ def processing_loop(in_queue: Queue):
             camera_cache[camera_uri] = source
 
         source = camera_cache[camera_uri]
-        meta = process_frame(camera_uri, frame, timestamp, frame_id)
 
-        pf = ProcessedFrame(camera_id=source.id, meta=str(meta), frame_id=frame_id)
-        db.add(pf)
+        # TODO upade with actual processing and db storage logic.
+        # Commented as demo objects are no longer with us (rip, ProcessedFrame, you will be missed)
+        # data_result = process_frame(camera_uri, frame, timestamp, frame_id)
+        # pf = SomeDbObjectOrMultiple(data_result)
+        # db.add(pf)
+
         db.commit()
