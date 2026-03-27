@@ -1,8 +1,8 @@
-"""4-point parking slot annotator.
+""" A module for selecting and managing parking zone points on images using a Tkinter-based UI.
 
-Extracts the first frame from a video file and displays it as the annotation
-canvas. Click exactly 4 points to define each parking zone; a dialog will ask
-for the zone name and category. Repeat for every spot, then click Save.
+This class provides functionality to select points to define parking zones, and save the selected
+points to a JSON file. It uses Tkinter for the graphical user interface. For the image the first frame
+of the input video is used.
 
 JSON Output Structure:
   { "source": str, "frame_width": int, "frame_height": int,
