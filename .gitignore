@@ -210,3 +210,5 @@ __marimo__/
 # video files and notebooks
 *.mp4
 *.ipynb
+
+.vscode/*
