@@ -14,10 +14,13 @@ python -m streamlit run dashboard/app.py
 python -m processing.run
 
 ### Draw new zones
-python -m processing.draw_zones [options] --uri <\your uri>
+python -m processing.draw_zones [option] --uri <\your uri>
+
+    Only one option at a time may be selected, selecting more than one does not garantee the expected behaviour.
 
     -a --add        to add to the existing zones, specification of the uri is obligatory
     -r --remove     to remove one or more given zones from a given setup, specification of the uri is obligatory
+    -v --visualize  to see the zones overlayed on the uri
 
 ### Manual Testing
 Add Camera:

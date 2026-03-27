@@ -150,7 +150,7 @@ def draw_loop(state,base_frame,counter=0,window=_WINDOW):
 
         elif key == 27:  # Esc — quit without saving
             print("[draw_zones] Exiting without saving.")
-            #cv2.destroyWindow(_WINDOW)
+            cv2.destroyWindow(_WINDOW)
             return
     return state
 
@@ -250,6 +250,58 @@ def remove_zones(uri,zones, out):
     save_zone_config(config, out)
 
 
+def visualize(uri):
+    window = "visualize"
+    zones_path = Path("parking_slots") / (Path(uri).stem + ".json")
+    zones = []
+
+    # check if there are zones
+    if zones_path.exists():    
+        zone_config: ZoneConfig = load_zone_config(zones_path)
+        zones = zone_config.zones
+
+    # get the zones
+    state: dict = {"pending": [], "completed": [], "redraw": True}
+    for i in zones:
+        polygon = np.array(i.polygon, dtype=np.int32)
+        state["completed"].append(SlotZone(name=i.name, polygon=polygon))
+            
+    
+    cv2.namedWindow(window, cv2.WINDOW_NORMAL)
+
+    cap = cv2.VideoCapture(uri)
+    if not cap.isOpened():
+        raise RuntimeError(f"Cannot open stream: {uri}")
+    
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            break
+        img = _draw_state(frame, state["completed"], state["pending"])
+        
+        cv2.imshow(window, img)
+
+        key = cv2.waitKey(20) & 0xFF
+
+        try:
+            window_closed = cv2.getWindowProperty(window, cv2.WND_PROP_VISIBLE) < 1
+        except cv2.error:
+            window_closed = False
+        if window_closed:  
+            break
+        
+        if key == ord("q"):  # save and quit
+            break
+
+        elif key == 27:  # Esc — quit without saving
+            print("[draw_zones] Exiting without saving.")
+            cv2.destroyWindow(window)
+            return
+    
+    cap.release()
+    cv2.destroyWindow(window)
+    pass
+
 def extract_counter_from_name(name):
     return int(name.split("A")[1])
 
@@ -263,6 +315,7 @@ if __name__ == "__main__":
     )
     parser.add_argument("-a","--add", action="store_true",help="To add zones to a given setup")
     parser.add_argument("-r","--remove",nargs="+",help="To remove one or more given zones from a given setup")
+    parser.add_argument("-v","--visualize",action="store_true",help="Visualize the current setup with the zones")
     parser.add_argument("--uri", type=Path, help="Input video")
     
     args = parser.parse_args()
@@ -274,15 +327,17 @@ if __name__ == "__main__":
         if not cap.isOpened():
             raise RuntimeError(f"Cannot open stream: {uri}")
         ret, frame = cap.read()
+        cap.release()
         if ret:
             zones_path = Path("parking_slots") / (Path(uri).stem + ".json")
             if args.add:
                 add_zones(uri,frame,str(zones_path))
             elif args.remove:
                 remove_zones(uri,args.remove,str(zones_path))
+            elif args.visualize:
+                visualize(uri);
             else:
                 draw_parking_from_scratch(uri, frame, str(zones_path))
-        cap.release()
     else:
         pass
     pass
