@@ -2,7 +2,8 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 import os
 from dotenv import load_dotenv
-from db import init_db, SessionLocal, CameraSource, ProcessedFrame  
+from db import init_db, SessionLocal, CameraSource
+from db.models import Detection
 
 load_dotenv()
 
@@ -36,13 +37,9 @@ def recent_analytics(limit=50):
         raise HTTPException(status_code=400, detail="Limit must be an integer")
     if limit < 1:
         raise HTTPException(status_code=400, detail="Limit must be positive")
+
     db = SessionLocal()
-    items = (
-        db.query(ProcessedFrame)
-        .order_by(ProcessedFrame.timestamp.desc())
-        .limit(limit)
-        .all()
-    )
+    items = db.query(Detection).order_by(Detection.timestamp.desc()).limit(limit).all()
     return [
         {
             "id": it.id,
