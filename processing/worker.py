@@ -130,8 +130,8 @@ def processing_loop(in_queue: Queue):
         car_detection, pedestrian_detection = detect_frame_dual(frame)
 
         # Filter and add ID according to the function filter_detections
-        filtered_car_detections = filter_detections(car_detection)
-        filtered_pedestrian_detections = filter_detections(pedestrian_detection)
+        # filtered_car_detections = filter_detections(car_detection)
+        # filtered_pedestrian_detections = filter_detections(pedestrian_detection)
 
         
 

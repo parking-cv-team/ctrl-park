@@ -7,6 +7,7 @@ streamlit
 opencv-python
 python-dotenv
 pymysql
+opencv-python
 cryptography
 opencv-python
 ultralytics
