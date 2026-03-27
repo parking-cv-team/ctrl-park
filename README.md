@@ -3,6 +3,8 @@
 ### Install Dependencies
 pip install -r requirements.txt
 
+**N.B.** Make sure you have installed Tkinter on your Python installation!
+
 ### Install MySQL and create database
 Install MySQL here: https://www.mysql.com/it/downloads/
 

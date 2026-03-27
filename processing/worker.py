@@ -5,6 +5,8 @@ from datetime import datetime, timedelta
 from dotenv import load_dotenv
 from db import SessionLocal, CameraSource, Zone, Detection, ZoneOccupancy
 
+from detect_frame import detect_frame_dual
+
 load_dotenv()
 
 detection_tracker = {}
@@ -112,6 +114,12 @@ def processing_loop(in_queue: Queue):
         source = camera_cache[camera_uri]
 
         # TODO upade with actual processing and db storage logic.
+
+        # Predict and obtain two sv.Detection objects
+        car_detection, pedestrian_detection = detect_frame_dual(frame)
+
+        # do stuff with the sv.Detection objects like tracking or parkign lot detection et cetera
+
         # Commented as demo objects are no longer with us (rip, ProcessedFrame, you will be missed)
         # data_result = process_frame(camera_uri, frame, timestamp, frame_id)
         # pf = SomeDbObjectOrMultiple(data_result)

@@ -32,9 +32,7 @@ def main():
         if not ret:
             break
 
-        detections = detect_frame_dual(frame)
-        cars = detections["cars"]
-        peds = detections["pedestrians"]
+        cars, peds = detect_frame_dual(frame)
 
         annotated = box_annotator.annotate(frame.copy(), detections=cars)
         annotated = box_annotator.annotate(annotated, detections=peds)
