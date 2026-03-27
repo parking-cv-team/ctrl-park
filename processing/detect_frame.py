@@ -1,6 +1,7 @@
 import supervision as sv 
 import cv2 
 from ultralytics import YOLO
+from rfdetr import RFDETRMedium
 
 def detect_frame_dual(
         frame,

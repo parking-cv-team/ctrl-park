@@ -3,6 +3,11 @@
 ### Install Dependencies
 pip install -r requirements.txt
 
+### Install MySQL and create database
+Install MySQL here: https://www.mysql.com/it/downloads/
+
+mysql -u root -p -e "CREATE DATABASE ctrl_park;"
+
 ### Run the Backend API
 python -m uvicorn backend.main:app --reload
 
