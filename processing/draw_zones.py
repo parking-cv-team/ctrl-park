@@ -28,6 +28,7 @@ from .zones import (
     ZoneConfig,
     _default_config_path,
     save_zone_config,
+    load_zone_config
 )
 
 _ZONE_COLORS: list[tuple[int, int, int]] = [
@@ -101,21 +102,8 @@ def _mouse_callback(event: int, x: int, y: int, flags: int, state: dict) -> None
         state["redraw"] = True
 
 
-def draw_parking_from_scratch(uri, base_frame,out) -> None:
-    
-    
-    out_path = Path(out) if out else _default_config_path(uri)
+def draw_loop(state,base_frame,counter=0,window=_WINDOW):
 
-
-    frame_height, frame_width = base_frame.shape[:2]
-    print(f"\n[draw_zones] {uri}  {frame_width}x{frame_height}")
-    print(f"[draw_zones] Output will be saved to: {out_path}")
-    print(f"[draw_zones] {_HUD}\n")
-
-    state: dict = {"pending": [], "completed": [], "redraw": True}
-    cv2.namedWindow(_WINDOW, cv2.WINDOW_NORMAL)
-    cv2.setMouseCallback(_WINDOW, _mouse_callback, state)
-    counter = 0
     while True:
         # Auto-close after 4 clicks
         if len(state["pending"]) == _VERTICES_PER_SLOT:
@@ -133,13 +121,13 @@ def draw_parking_from_scratch(uri, base_frame,out) -> None:
 
         if state["redraw"]:
             display = _draw_state(base_frame, state["completed"], state["pending"])
-            cv2.imshow(_WINDOW, display)
+            cv2.imshow(window, display)
             state["redraw"] = False
 
         key = cv2.waitKey(20) & 0xFF
 
         try:
-            window_closed = cv2.getWindowProperty(_WINDOW, cv2.WND_PROP_VISIBLE) < 1
+            window_closed = cv2.getWindowProperty(window, cv2.WND_PROP_VISIBLE) < 1
         except cv2.error:
             window_closed = False
         if window_closed:  # window closed via X
@@ -164,6 +152,22 @@ def draw_parking_from_scratch(uri, base_frame,out) -> None:
             print("[draw_zones] Exiting without saving.")
             #cv2.destroyWindow(_WINDOW)
             return
+    return state
+
+def draw_parking_from_scratch(uri, base_frame,out,state: dict = {"pending": [], "completed": [], "redraw": True},counter=0) -> None:
+    
+    
+    out_path = Path(out) if out else _default_config_path(uri)
+
+
+    frame_height, frame_width = base_frame.shape[:2]
+    print(f"\n[draw_zones] {uri}  {frame_width}x{frame_height}")
+    print(f"[draw_zones] Output will be saved to: {out_path}")
+    print(f"[draw_zones] {_HUD}\n")
+
+    cv2.namedWindow(_WINDOW, cv2.WINDOW_NORMAL)
+    cv2.setMouseCallback(_WINDOW, _mouse_callback, state)
+    state=draw_loop(state,base_frame,counter)
 
     cv2.destroyWindow(_WINDOW)
 
@@ -183,6 +187,7 @@ def draw_parking_from_scratch(uri, base_frame,out) -> None:
         frame_height=frame_height,
         zones=state["completed"],
     )
+    
     save_zone_config(config, out_path)
     print(f"\n[draw_zones] Saved {len(config.zones)} zone(s) to {out_path}")
 
@@ -195,3 +200,60 @@ def getNewName(counter):
     
     
     return "A"+str(counter)
+
+def add_zones(uri, base_frame,out):
+
+    zones_path = Path("parking_slots") / (Path(uri).stem + ".json")
+
+    if not zones_path.exists():
+        print(f"[demo_pipeline] No zone config found at {zones_path}. Drawing zones now.")
+        draw_parking_from_scratch(uri, frame, str(zones_path))
+        if not zones_path.exists():
+            return None
+        
+    zone_config: ZoneConfig = load_zone_config(zones_path)
+    last_name ="A-1"
+    state: dict = {"pending": [], "completed": [], "redraw": True}
+    for i in zone_config.zones:
+        last_name=i.name
+        polygon = np.array(i.polygon, dtype=np.int32)
+        state["completed"].append(SlotZone(name=i.name, polygon=polygon))
+        _draw_state(base_frame, state["completed"], state["pending"])
+    counter = extract_counter_from_name(last_name) + 1
+    draw_parking_from_scratch(uri,base_frame,out,state=state,counter=counter)
+
+    pass
+
+def extract_counter_from_name(name):
+    return int(name.split("A")[1])
+
+if __name__ == "__main__":
+    import argparse
+    import optparse
+    from .camera_ingest import get_parking_zones
+    parser = argparse.ArgumentParser(
+        description="Check parking slot occupancy from a zone config + video",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    parser.add_argument("-a","--add", action="store_true",help="To add zones to a current setup")
+    parser.add_argument("--uri", type=Path, help="Input video")
+    
+    args = parser.parse_args()
+    
+    
+    if args.uri:
+        uri = str(args.uri)
+        cap = cv2.VideoCapture(uri)
+        if not cap.isOpened():
+            raise RuntimeError(f"Cannot open stream: {uri}")
+        ret, frame = cap.read()
+        if ret:
+            zones_path = Path("parking_slots") / (Path(uri).stem + ".json")
+            if args.add:
+                add_zones(uri,frame,str(zones_path))
+            else:
+                draw_parking_from_scratch(uri, frame, str(zones_path))
+        cap.release()
+    else:
+        pass
+    pass

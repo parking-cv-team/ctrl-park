@@ -51,7 +51,7 @@ def _default_config_path(video_path: str | Path) -> Path:
     """
     stem = Path(video_path).stem
     repo_root = Path(__file__).resolve().parent.parent
-    return repo_root / "processing"/ "parking_slots" / f"{stem}_zones.json"
+    return repo_root / "parking_slots" / f"{stem}_zones.json"
 
 
 def load_zone_config(config_path: str | Path) -> ZoneConfig:
