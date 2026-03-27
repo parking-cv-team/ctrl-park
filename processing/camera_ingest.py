@@ -18,9 +18,11 @@ def capture_stream(uri: str, out_queue: Queue):
     logging_enabled = os.getenv("USE_LOGGING", "False").lower() == "true"
     max_queue_size = int(os.getenv("MAX_QUEUE_SIZE", "200"))
     queue_threshold = int(os.getenv("QUEUE_RESTART_THRESHOLD", str(max_queue_size // 2)))
+    time_sleep = int(os.getenv("SLEEP_TIME", "1"))
+
     if logging_enabled: 
         log_path = os.getenv("QUEUE_SIZE_LOG_PATH", "queue_size.log")
-        logfile = open(log_path, "a", encoding="utf-8", buffering=1)
+        logfile = open(log_path, "w", encoding="utf-8", buffering=1)
 
         def _log_queue_size(size):
             logfile.write(f"{time.time():.3f},{uri},{size}\n")
@@ -35,7 +37,7 @@ def capture_stream(uri: str, out_queue: Queue):
                 _log_queue_size(out_queue.qsize())
                 if out_queue.qsize() > max_queue_size:
                     while out_queue.qsize() > queue_threshold:
-                        time.sleep(1)
+                        time.sleep(time_sleep)
                 count += 1
         finally:
             logfile.close()
