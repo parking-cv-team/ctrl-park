@@ -12,6 +12,7 @@ mysql -u root -p -e "CREATE DATABASE ctrl_park;"
 
 ### Run the Backend API
 **N.B.** Running the backend with the following command is also what applies database migrations
+
 python -m uvicorn backend.main:app --reload
 
 ### Run the Dashboard
