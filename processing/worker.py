@@ -129,8 +129,6 @@ def _persist_detections(
             timestamp=dt,
             tracker_id=tracker_id,
             global_id=global_id,
-            world_x=world_x,
-            world_y=world_y,
             class_id=int(tracked.class_id[i]) if tracked.class_id is not None else 0,
             class_name=class_name,
             confidence=confidence,
@@ -148,7 +146,8 @@ def _persist_detections(
         detections_to_add[det_row] = None
      
 
-
+        if det_row.zone_id is None:                                                                                                                 
+            continue
         if det_row.zone_id not in occupancy_timers:
             occupancy_timers[det_row.zone_id] = {
                 "tracker_id": det_row.tracker_id,
@@ -167,20 +166,22 @@ def _persist_detections(
             and occupancy_timers[det_row.zone_id]["new_tracker_id"] != det_row.tracker_id
         ):
             occupancy_timers[det_row.zone_id]["new_detection"] = det_row
+            occupancy_timers[det_row.zone_id]["new_tracker_id"] = det_row.tracker_id
+            occupancy_timers[det_row.zone_id]["new_tracker_timestamp"] = det_row.timestamp
         elif occupancy_timers[det_row.zone_id]["tracker_id"] == det_row.tracker_id:
-            occupancy_timers[det_row.zone_id]["new_detection"].tracker_id = None
-            occupancy_timers[det_row.zone_id]["new_detection"].timestamp = None
-        if occupancy_timers[det_row.zone_id]["new_detection"].tracker_timestamp and det_row.timestamp -occupancy_timers[
+            occupancy_timers[det_row.zone_id]["new_tracker_id"] = None
+            occupancy_timers[det_row.zone_id]["new_tracker_timestamp"] = None
+        if occupancy_timers[det_row.zone_id]["new_tracker_timestamp"] is not None and det_row.timestamp - occupancy_timers[
             det_row.zone_id
-        ]["new_detection"].tracker_timestamp > timedelta(minutes=2):
+        ]["new_tracker_timestamp"] > timedelta(minutes=2):
             occupancy_timers[det_row.zone_id]["tracker_id"] = det_row.tracker_id
-            occupancy_timers[det_row.zone_id]["new_detection"].tracker_id = None
-            occupancy_timers[det_row.zone_id]["new_detection"].tracker_timestamp = None
+            occupancy_timers[det_row.zone_id]["new_tracker_id"] = None
+            occupancy_timers[det_row.zone_id]["new_tracker_timestamp"] = None
             detections_to_add[det_row] = ZoneOccupancy(
                 detection_id=det_row,
                 zone_id=zone_id,
                 tracker_id=tracker_id,
-            )   
+            )
             continue
     
         # ── ADDED: whenever we confirm the current occupant is still present,                                                                                                                

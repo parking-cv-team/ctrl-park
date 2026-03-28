@@ -17,7 +17,7 @@ def _load_zone_config_from_db(source: str) -> CameraSource:
         zones: list[Zone] = []
         for z in camera.zones:
             polygon = np.array(z.polygon, dtype=np.int32)
-            zones.append(Zone(name=z.name, polygon=polygon))
+            zones.append(Zone(id=z.id, name=z.name, polygon=polygon, camera_id=z.camera_id))
 
         return CameraSource(
             name=camera.name,
