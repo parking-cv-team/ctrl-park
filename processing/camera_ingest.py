@@ -36,6 +36,12 @@ def get_parking_zones(uri, frame):
 def capture_stream(uri: str, out_queue: Queue):
     """Connect to a camera"""
     cap = cv2.VideoCapture(uri)
+    source_fps = cap.get(cv2.CAP_PROP_FPS)
+    target_fps = float(os.getenv("TARGET_FPS", "3"))
+    skip = max(  # if source_fps is unavailable, estimate 30fps and skip to get approximately target_fps
+        1, int(round((source_fps if source_fps > 0 else 30) / target_fps))
+    )
+
     if not cap.isOpened():
         raise RuntimeError(f"Cannot open stream: {uri}")
 
@@ -43,7 +49,8 @@ def capture_stream(uri: str, out_queue: Queue):
     ret, frame = cap.read()
     if ret:
         get_parking_zones(uri, frame)
-        out_queue.put((uri, frame, time.time(), count))
+        if count % skip == 0:
+            out_queue.put((uri, frame, time.time(), count))
         count += 1
 
     logging_enabled = os.getenv("USE_LOGGING", "False").lower() == "true"
@@ -67,7 +74,8 @@ def capture_stream(uri: str, out_queue: Queue):
                 ret, frame = cap.read()
                 if not ret:
                     break
-                out_queue.put((uri, frame, time.time(), count))
+                if count % skip == 0:
+                    out_queue.put((uri, frame, time.time(), count))
                 _log_queue_size(out_queue.qsize())
                 if out_queue.qsize() > max_queue_size:
                     while out_queue.qsize() > queue_threshold:
