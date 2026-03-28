@@ -17,6 +17,7 @@ class CameraInput(BaseModel):
     uri: str
 
 
+
 @app.post("/camera")
 def create_camera(camera: CameraInput):
     db = SessionLocal()
@@ -45,7 +46,47 @@ def recent_analytics(limit=50):
             "id": it.id,
             "camera_id": it.camera_id,
             "timestamp": it.timestamp,
-            "meta": it.meta,
+            
+        }
+        for it in items
+    ]
+
+@app.get("/analytics/cameras")
+def cameras(limit=50):
+    limit = int(limit)
+    if not limit:
+        raise HTTPException(status_code=400, detail="Limit must be an integer")
+    if limit < 1:
+        raise HTTPException(status_code=400, detail="Limit must be positive")
+
+    db = SessionLocal()
+    items = db.query(CameraSource)
+    return [
+        {
+            "id": it.id,
+            "name": it.name,
+            "uri": it.uri,
+        }
+        for it in items
+    ]
+
+@app.get("/analytics/zones")
+def cameras(camera_id,limit=50):
+    limit = int(limit)
+    if not limit:
+        raise HTTPException(status_code=400, detail="Limit must be an integer")
+    if limit < 1:
+        raise HTTPException(status_code=400, detail="Limit must be positive")
+
+    
+    db = SessionLocal()
+    items = db.query(Zone).filter(Zone.camera_id == camera_id).limit(limit).all()
+    return [
+        {
+            "id": it.id,
+            "name": it.name,
+            "category": it.category,
+            "camera_id": it.camera_id,
         }
         for it in items
     ]
