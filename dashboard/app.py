@@ -11,6 +11,46 @@ load_dotenv()
 RTSP_URL = "rtsp://localhost:8554/live.stream"
 
 
+
+def camera_button():
+    try:
+        response = requests.get(f"{API_BASE}/analytics/cameras")
+        response.raise_for_status()
+        rows = response.json()
+        #st.title("Selection Action App")
+
+        # 1. Create the dropdown (selectbox)
+        option = st.selectbox(
+            '## Choose a camera to see occupancy:',tuple([i["name"] for i in rows])
+        )
+
+        # 2. Create the button
+        if st.button('Confirm Selection'):
+            # 3. Logic to execute when button is clicked
+            st.success(f'You confirmed: {option}')
+            draw_table(list(filter(lambda x: x["name"]==option, rows))[0])
+            
+        else:
+            st.info('Please select an option and click the button.')
+        
+    except Exception as e:
+        st.error(f"Could not fetch analytics: {e}")
+    
+    
+
+@st.fragment(run_every=10)
+def draw_table(camera):
+    try:
+        response = requests.get(f"{API_BASE}/analytics/zones",params={"camera_id":camera["id"]})
+        response.raise_for_status()
+        rows = response.json()
+        for r in rows:
+            st.table(r)
+
+    except Exception as e:
+        st.error(f"Could not fetch analytics: {e}")
+
+
 def place_a_video():
     cap = cv2.VideoCapture(RTSP_URL)
     if not cap.isOpened():
@@ -58,3 +98,4 @@ with st.form("camera-form"):
 
 
 place_a_video()
+camera_button()
