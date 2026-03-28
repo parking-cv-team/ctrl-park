@@ -9,7 +9,7 @@ class CameraSource(Base):
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String(255), unique=True, nullable=False)
     uri = Column(String(255), nullable=False)
-
+    
     frames = relationship("ProcessedFrame", back_populates="source")
     zones = relationship("Zone", back_populates="camera")
 

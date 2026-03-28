@@ -5,6 +5,8 @@ from datetime import datetime, timedelta
 from dotenv import load_dotenv
 from db import SessionLocal, CameraSource, Zone, Detection, ZoneOccupancy
 
+from .detect_frame import detect_frame_dual
+
 load_dotenv()
 
 detection_tracker = {}
@@ -94,10 +96,20 @@ def processing_loop(in_queue: Queue):
 
     while True:
         camera_uri, frame, timestamp, frame_id = in_queue.get()
+
+        
+        
+        
+        print("Processing frame id", frame_id) #TODO REMOVE ONCE EVERYTHING IS DONE. THIS IS JUST FOR DEBUGGING
+
+
+
+
         if frame is None:
             # eos
             break
-
+        
+        """
         if camera_uri not in camera_cache:
             source = (
                 db.query(CameraSource).filter(CameraSource.uri == camera_uri).first()
@@ -110,8 +122,21 @@ def processing_loop(in_queue: Queue):
             camera_cache[camera_uri] = source
 
         source = camera_cache[camera_uri]
+        """
 
         # TODO upade with actual processing and db storage logic.
+
+        # Predict and obtain two sv.Detection objects
+        car_detection, pedestrian_detection = detect_frame_dual(frame)
+
+        # Filter and add ID according to the function filter_detections
+        # filtered_car_detections = filter_detections(car_detection)
+        # filtered_pedestrian_detections = filter_detections(pedestrian_detection)
+
+        
+
+        # do stuff with the sv.Detection objects like tracking or parkign lot detection et cetera
+
         # Commented as demo objects are no longer with us (rip, ProcessedFrame, you will be missed)
         # data_result = process_frame(camera_uri, frame, timestamp, frame_id)
         # pf = SomeDbObjectOrMultiple(data_result)
