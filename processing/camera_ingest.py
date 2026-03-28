@@ -4,13 +4,16 @@ from queue import Queue
 import os
 from dotenv import load_dotenv
 
-from db.models import CameraSource
+from typing import List
+from db.models import CameraSource, Zone
 from .zones import _load_zone_config_from_db
 from .draw_zones import draw_parking_from_scratch
 from pathlib import Path
 
 
 load_dotenv()
+
+
 
 
 def get_parking_zones(uri, frame):
@@ -47,11 +50,6 @@ def capture_stream(uri: str, out_queue: Queue):
 
     count = 0
     ret, frame = cap.read()
-    if ret:
-        get_parking_zones(uri, frame)
-        if count % skip == 0:
-            out_queue.put((uri, frame, time.time(), count))
-        count += 1
 
     logging_enabled = os.getenv("USE_LOGGING", "False").lower() == "true"
     max_queue_size = int(os.getenv("MAX_QUEUE_SIZE", "200"))
