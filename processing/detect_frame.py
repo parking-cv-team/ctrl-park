@@ -4,20 +4,25 @@ from ultralytics import YOLO
 from rfdetr import RFDETRMedium
 from typing import Tuple
 
-def detect_frame_dual(
-        frame,
+def load_models(
         mcar_path: str = r'processing\models_weights\best.pt', # path to the car detection model
         mped_path: str = r'processing\models_weights\yolov5su.pt', # path to the pedestrian detection model
+) -> Tuple[YOLO, YOLO]:
+    # Load models to optimize time and memory efficiency
+    return (YOLO(mcar_path), YOLO(mped_path))
+
+
+def detect_frame_dual(
+        frame,
+        model_car: YOLO,
+        model_ped: YOLO, # models loaded with load_models
         arg_car: dict = {'conf': 0.5}, # arguments to the car detector
         arg_ped: dict = {'conf': 0.4}, # arguments to the pedestrian detector
     ) -> Tuple[sv.Detections, sv.Detections]:
     frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
-    model_car = YOLO(mcar_path)
-    model_pedestrian = YOLO(mped_path)
-
     detections_car = model_car.predict(frame_rgb, **arg_car)[0]
-    detections_pedestrians = model_pedestrian.predict(frame_rgb, classes=0, **arg_ped)[0]
+    detections_pedestrians = model_ped.predict(frame_rgb, classes=0, **arg_ped)[0]
     
     return (sv.Detections.from_ultralytics(detections_car), sv.Detections.from_ultralytics(detections_pedestrians))
 
