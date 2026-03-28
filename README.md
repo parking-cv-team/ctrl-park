@@ -3,6 +3,13 @@
 ### Install Dependencies
 pip install -r requirements.txt
 
+**N.B.** Make sure you have installed Tkinter on your Python installation!
+
+### Install MySQL and create database
+Install MySQL here: https://www.mysql.com/it/downloads/
+
+mysql -u root -p -e "CREATE DATABASE ctrl_park;"
+
 ### Run the Backend API
 python -m uvicorn backend.main:app --reload
 
@@ -28,5 +35,8 @@ DB_PORT=3306
 DB_NAME=ctrl_park
 API_BASE_URL=http://localhost:8000
 CAMERA_URI=video/testfile.mp4
-
-
+USE_LOGGING=True
+QUEUE_SIZE_LOG_PATH=queue_size.log
+MAX_QUEUE_SIZE=200
+QUEUE_RESTART_THRESHOLD=100
+SLEEP_TIME=1
