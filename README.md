@@ -36,6 +36,8 @@ Get Analytics:
 curl "http://localhost:8000/analytics/recent"
 
 To video feed on the dashboard (probably only works on linux for now):
+
+
     0. have docker
 
     1. setup the docker:
