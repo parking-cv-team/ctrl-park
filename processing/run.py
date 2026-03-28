@@ -5,7 +5,6 @@ import os
 from dotenv import load_dotenv
 from .worker import processing_loop
 from .camera_ingest import capture_stream
-from .draw_zones import launch as launch_zone_drawer
 
 load_dotenv()
 
@@ -27,15 +26,6 @@ def main():
 
     camera_uri = args.video
 
-    # Zone annotation — blocks until the user saves the JSON or quits
-    zones_path = launch_zone_drawer(camera_uri)
-    if zones_path is None:
-        print("[run] No zones saved. Aborting pipeline.")
-        return
-    print(f"[run] Zones loaded from {zones_path}. Starting pipeline...")
-
-    # print("aborting anyways lol (everything else is still to be completed)")
-    # return
 
     frame_queue = Queue()
     worker_thread = threading.Thread(
