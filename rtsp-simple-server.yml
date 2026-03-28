@@ -1,0 +1,7 @@
+# Source - https://stackoverflow.com/a/63031869
+# and commands for mok_camera
+
+protocols: [tcp]
+paths:
+  all:
+    source: publisher
