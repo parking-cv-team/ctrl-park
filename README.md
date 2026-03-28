@@ -35,6 +35,18 @@ curl -X POST "http://localhost:8000/camera" -H "Content-Type: application/json" 
 Get Analytics: 
 curl "http://localhost:8000/analytics/recent"
 
+To video feed on the dashboard (probably only works on linux for now):
+    0. have docker
+
+    1. setup the docker:
+        docker run --rm -it -v $PWD/rtsp-simple-server.yml:/rtsp-simple-server.yml -p 8554:8554 aler9/rtsp-simple-server:v1.3.0
+
+    2. setup ffmpeg that feeds the video (video/testfile.mp4 in this case) to the docker:
+        ffmpeg -re -stream_loop -1 -i video/testfile.mp4 -f rtsp -rtsp_transport tcp rtsp://localhost:8554/live.stream
+
+    3. profit
+
+
 ### .env template:
 DB_USER=root
 DB_PASSWORD=root

@@ -1,9 +1,32 @@
 import streamlit as st
 import requests
 import os
+import cv2
 from dotenv import load_dotenv
 
+
 load_dotenv()
+
+
+RTSP_URL = "rtsp://localhost:8554/live.stream"
+
+
+def place_a_video():
+    cap = cv2.VideoCapture(RTSP_URL)
+    if not cap.isOpened():
+        st.error(f"Could not open stream: {RTSP_URL}")
+        return
+
+    placeholder = st.empty()
+    try:
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                break
+            placeholder.image(frame, channels="BGR")
+    finally:
+        cap.release()
+
 
 API_BASE = os.getenv("API_BASE_URL", "http://localhost:8000")
 
@@ -32,3 +55,6 @@ with st.form("camera-form"):
             st.success("Camera registered")
         except Exception as e:
             st.error(f"Error: {e}")
+
+
+place_a_video()
