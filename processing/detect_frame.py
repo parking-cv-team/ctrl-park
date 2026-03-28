@@ -4,8 +4,8 @@ from ultralytics import YOLO
 from typing import Tuple
 
 def load_models(
-        mcar_path: str = r'processing\models_weights\best.pt', # path to the car detection model
-        mped_path: str = r'processing\models_weights\yolo26n.pt', # path to the pedestrian detection model
+        mcar_path: str = 'processing/models_weights/best.pt', # path to the car detection model
+        mped_path: str = 'processing/models_weights/yolov5su.pt', # path to the pedestrian detection model
 ) -> Tuple[YOLO, YOLO]:
     # Load models to optimize time and memory efficiency
     return (YOLO(mcar_path), YOLO(mped_path))
@@ -22,8 +22,11 @@ def detect_frame_dual(
 
     detections_car = model_car.predict(frame_rgb, **arg_car)[0]
     detections_pedestrians = model_ped.predict(frame_rgb, classes=0, **arg_ped)[0]
-    
-    return (sv.Detections.from_ultralytics(detections_car), sv.Detections.from_ultralytics(detections_pedestrians))
+
+    return {
+        "cars": sv.Detections.from_ultralytics(detections_car),
+        "pedestrian": sv.Detections.from_ultralytics(detections_pedestrians),
+    }
 
 def detect_frame_baseline(
     frame,

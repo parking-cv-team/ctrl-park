@@ -1,10 +1,11 @@
 import argparse
 import threading
+import cv2
 from queue import Queue
 import os
 from dotenv import load_dotenv
 from .worker import processing_loop
-from .camera_ingest import capture_stream
+from .camera_ingest import capture_stream, get_parking_zones
 
 load_dotenv()
 
@@ -27,14 +28,24 @@ def main():
     camera_uri = args.video
 
 
+    # Load zones upfront so the worker can be started before capture begins.
+    cap = cv2.VideoCapture(camera_uri)
+    ret, first_frame = cap.read()
+    cap.release()
+    zones = get_parking_zones(camera_uri, first_frame) if ret else []
+    if zones is None:
+        zones = []
+
     frame_queue = Queue()
+
     worker_thread = threading.Thread(
-        target=processing_loop, args=(frame_queue,), daemon=True
+        target=processing_loop, args=(frame_queue, zones), daemon=True
     )
     worker_thread.start()
 
     capture_stream(camera_uri, frame_queue)
     print("Capture done, waiting for worker to flush")
+
     frame_queue.join()
 
 
