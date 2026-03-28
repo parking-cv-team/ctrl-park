@@ -1,11 +1,11 @@
 import supervision as sv 
 import cv2 
 from ultralytics import YOLO
-from typing import Tuple
+from typing import Tuple, Dict
 
 def load_models(
-        mcar_path: str = 'processing/models_weights/best.pt', # path to the car detection model
-        mped_path: str = 'processing/models_weights/yolov5su.pt', # path to the pedestrian detection model
+        mcar_path: str = r'processing/models_weights/best.pt', # path to the car detection model
+        mped_path: str = r'processing/models_weights/yolo26n.pt', # path to the pedestrian detection model
 ) -> Tuple[YOLO, YOLO]:
     # Load models to optimize time and memory efficiency
     return (YOLO(mcar_path), YOLO(mped_path))
@@ -17,7 +17,7 @@ def detect_frame_dual(
         model_ped: YOLO, # models loaded with load_models
         arg_car: dict = {'conf': 0.5}, # arguments to the car detector
         arg_ped: dict = {'conf': 0.4}, # arguments to the pedestrian detector
-    ) -> Tuple[sv.Detections, sv.Detections]:
+    ) -> Dict[str, sv.Detections]:
     frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
     detections_car = model_car.predict(frame_rgb, **arg_car)[0]
