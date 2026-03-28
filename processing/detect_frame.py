@@ -1,12 +1,11 @@
 import supervision as sv 
 import cv2 
 from ultralytics import YOLO
-from rfdetr import RFDETRMedium
 from typing import Tuple
 
 def load_models(
         mcar_path: str = r'processing\models_weights\best.pt', # path to the car detection model
-        mped_path: str = r'processing\models_weights\yolov5su.pt', # path to the pedestrian detection model
+        mped_path: str = r'processing\models_weights\yolo26n.pt', # path to the pedestrian detection model
 ) -> Tuple[YOLO, YOLO]:
     # Load models to optimize time and memory efficiency
     return (YOLO(mcar_path), YOLO(mped_path))

@@ -1,10 +1,11 @@
 import argparse
 import cv2
 import supervision as sv
-from detect_frame import detect_frame_dual as detect
+from .detect_frame import detect_frame_dual as detect
+from .detect_frame import load_models
 
 # RUN THIS BY WRITING THE FOLLOWING ON COMMAND PROMPT:
-# python SCRIPT_detect_video.py --video <insert_video_path>
+# python -m processing.SCRIPT_detect_video --video <insert_video_path>
 
 def main():
     parser = argparse.ArgumentParser(description="Run detection on a video file.")
@@ -27,12 +28,14 @@ def main():
         writer = cv2.VideoWriter(args.output, cv2.VideoWriter_fourcc(*"mp4v"), fps, (w, h)) # type: ignore
 
     frame_idx = 0
+    
+    m_car, m_ped = load_models()
     while True:
         ret, frame = cap.read()
         if not ret:
             break
 
-        cars, peds = detect(frame)
+        cars, peds = detect(frame, m_car, m_ped)
 
         annotated = box_annotator.annotate(frame.copy(), detections=cars)
         annotated = box_annotator.annotate(annotated, detections=peds)

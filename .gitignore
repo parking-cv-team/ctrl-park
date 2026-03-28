@@ -216,3 +216,4 @@ __marimo__/
 # data
 data/
 parking_slots/
+processing/models_weights_best2.pt
