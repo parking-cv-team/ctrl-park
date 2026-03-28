@@ -3,7 +3,9 @@ import time
 from queue import Queue
 import os
 from dotenv import load_dotenv
-from .zones import ZoneConfig,load_zone_config
+
+from db.models import CameraSource
+from .zones import _load_zone_config_from_db
 from .draw_zones import draw_parking_from_scratch
 from pathlib import Path
 
@@ -12,22 +14,24 @@ load_dotenv()
 
 
 def get_parking_zones(uri, frame):
-
-    zones_path = Path("parking_slots") / (Path(uri).stem + ".json")
-
-    if not zones_path.exists():
-        print(f"[demo_pipeline] No zone config found at {zones_path}. Drawing zones now.")
-        draw_parking_from_scratch(uri, frame, str(zones_path))
-        if not zones_path.exists():
+    try:
+        zone_config: CameraSource = _load_zone_config_from_db(source=uri)
+    except FileNotFoundError:
+        print(
+            f"[demo_pipeline] No zone config found in DB for {uri}. Drawing zones now."
+        )
+        draw_parking_from_scratch(uri, frame, None)
+        try:
+            zone_config = _load_zone_config_from_db(source=uri)
+        except FileNotFoundError:
             return None
-
-    zone_config: ZoneConfig = load_zone_config(zones_path)
 
     if not zone_config.zones:
         print("[demo_pipeline] Zone config has no zones.")
         return None
 
     return zone_config.zones
+
 
 def capture_stream(uri: str, out_queue: Queue):
     """Connect to a camera"""
@@ -38,16 +42,18 @@ def capture_stream(uri: str, out_queue: Queue):
     count = 0
     ret, frame = cap.read()
     if ret:
-        get_parking_zones(uri,frame)
+        get_parking_zones(uri, frame)
         out_queue.put((uri, frame, time.time(), count))
         count += 1
-    
+
     logging_enabled = os.getenv("USE_LOGGING", "False").lower() == "true"
     max_queue_size = int(os.getenv("MAX_QUEUE_SIZE", "200"))
-    queue_threshold = int(os.getenv("QUEUE_RESTART_THRESHOLD", str(max_queue_size // 2)))
+    queue_threshold = int(
+        os.getenv("QUEUE_RESTART_THRESHOLD", str(max_queue_size // 2))
+    )
     time_sleep = float(os.getenv("SLEEP_TIME", "1.0"))
 
-    if logging_enabled: 
+    if logging_enabled:
         # logging for debugging purposes, should be removed in the final version
         log_path = os.getenv("QUEUE_SIZE_LOG_PATH", "queue_size.log")
         logfile = open(log_path, "w", encoding="utf-8", buffering=1)
@@ -73,7 +79,7 @@ def capture_stream(uri: str, out_queue: Queue):
     else:
         try:
             while True:
-                # Queue manager: checks for the queue size as it gets filled up, if it's too big then the script 
+                # Queue manager: checks for the queue size as it gets filled up, if it's too big then the script
                 # waits for a certain amount of time (as in defined in your .env file or as a default it's 1 second)
                 ret, frame = cap.read()
                 if not ret:
