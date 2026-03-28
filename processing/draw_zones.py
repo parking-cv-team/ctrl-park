@@ -1,251 +1,363 @@
-""" A module for selecting and managing parking zone points on images using a Tkinter-based UI.
+"""Standalone 4-point parking slot annotator.
 
-This class provides functionality to select points to define parking zones, and save the selected
-points to a JSON file. It uses Tkinter for the graphical user interface. For the image the first frame
-of the input video is used.
+Click exactly 4 points on the video frame to define each parking spot.
+The polygon closes automatically after the 4th click and you are prompted
+for a name in the terminal. Repeat for every spot, then press Q to save.
 
-JSON Output Structure:
-  { "source": str, "frame_width": int, "frame_height": int,
-    "zones": [ {"name": str, "polygon": [[x,y],...], "category": str|null} ] }
-Up until now this should be the standard format of Zones
-    
 Usage:
-    On CLI (manually)
-    python -m processing.draw_zones --video video/testfile.mp4
-    python -m processing.draw_zones --video foo.mp4 --out data/zones/custom.json
+    python scripts/draw_zones.py
+    python scripts/draw_zones.py --video data/parking_sample.mp4
+    python scripts/draw_zones.py --video foo.mp4 --frame 30 --out data/zones/custom.json
 
-    On Pipeline:
-    Import launch and write 'launch_zone_drawer(camera_uri)' where camera_uri is a with valid RTSP/HTTP camera URI 
-    or a directory to a .mp4 file
-
-We declare that this is a modified version of the ParkingPtsSelection file from Ultralytics' solution module.
-For more details about the original version see https://docs.ultralytics.com/guides/parking-management/
+Keys:
+    Left-click  Add vertex (polygon closes automatically after 4 clicks)
+    U           Undo last pending vertex
+    Z           Undo last completed zone
+    Q           Save all zones to JSON and quit
+    Esc         Quit without saving
 """
 
-from __future__ import annotations
-
 import argparse
-import json
-import tkinter as tk
 from pathlib import Path
-from tkinter import messagebox, simpledialog
 
 import cv2
-from PIL import Image, ImageTk
+import numpy as np
 
-_ZONE_COLORS = [
-    "#00ff00", "#00a5ff", "#ff0000", "#0000ff",
-    "#ffff00", "#ff00ff", "#00ffff", "#800080",
+from .zones import (
+    SlotZone,
+    ZoneConfig,
+    _default_config_path,
+    save_zone_config,
+    load_zone_config
+)
+
+_ZONE_COLORS: list[tuple[int, int, int]] = [
+    (0, 255, 0),    # green
+    (0, 165, 255),  # orange
+    (255, 0, 0),    # blue
+    (0, 0, 255),    # red
+    (255, 255, 0),  # cyan
+    (255, 0, 255),  # magenta
+    (0, 255, 255),  # yellow
+    (128, 0, 128),  # purple
 ]
-_CANVAS_MAX_W = 1280
-_CANVAS_MAX_H = 720
+
+_WINDOW = "Parking Zone Drawer"
+_HUD = "Click 4 pts/spot | U: undo vertex | Z: undo zone | Q: save & quit | Esc: quit"
 _VERTICES_PER_SLOT = 4
 
 
-def _default_out_path(video_path: Path) -> Path:
-    return Path("data/zones") / f"{video_path.stem}_zones.json"
+def _draw_state(
+    canvas: np.ndarray,
+    completed: list[SlotZone],
+    pending: list[tuple[int, int]],
+) -> np.ndarray:
+    """Render completed zones and in-progress vertices onto a copy of canvas."""
+    out = canvas.copy()
+    overlay = canvas.copy()
 
-
-def _extract_first_frame(video_path: Path) -> tuple[Image.Image, int, int]:
-    """Return (PIL image, original_width, original_height) for frame 0."""
-    cap = cv2.VideoCapture(str(video_path))
-    if not cap.isOpened():
-        raise FileNotFoundError(f"Cannot open video: {video_path}")
-    ok, frame = cap.read()
-    cap.release()
-    if not ok:
-        raise RuntimeError(f"Could not read first frame from {video_path}")
-    h, w = frame.shape[:2]
-    rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-    return Image.fromarray(rgb), w, h
-
-class ZoneDrawer:
-    def __init__(self, video_path: Path, out_path: Path) -> None:
-        self.video_path = video_path
-        self.out_path = out_path
-
-        self.image, self.imgw, self.imgh = _extract_first_frame(video_path)
-
-        # Scale to fit canvas
-        aspect = self.imgw / self.imgh
-        if aspect > 1:
-            self.canvas_w = min(_CANVAS_MAX_W, self.imgw)
-            self.canvas_h = int(self.canvas_w / aspect)
-        else:
-            self.canvas_h = min(_CANVAS_MAX_H, self.imgh)
-            self.canvas_w = int(self.canvas_h * aspect)
-
-        self.scale_x = self.imgw / self.canvas_w
-        self.scale_y = self.imgh / self.canvas_h
-
-        self.zones: list[dict] = []
-        self.current_pts: list[tuple[int, int]] = []
-
-        self._build_ui()
-
-    def _build_ui(self) -> None:
-        self.root = tk.Tk()
-        self.root.title(f"Parking Zone Drawer — {self.video_path.name}")
-        self.root.resizable(False, False)
-
-        # Toolbar
-        toolbar = tk.Frame(self.root)
-        toolbar.pack(side=tk.TOP, fill=tk.X, pady=4)
-
-        tk.Button(toolbar, text="Remove Last Zone",
-                  command=self._remove_last_zone).pack(side=tk.LEFT, padx=4)
-        tk.Button(toolbar, text="Save & Quit",
-                  command=self._save_and_quit).pack(side=tk.LEFT, padx=4)
-        tk.Button(toolbar, text="Quit without Saving",
-                  command=self.root.destroy).pack(side=tk.LEFT, padx=4)
-
-        # Output path field
-        path_frame = tk.Frame(self.root)
-        path_frame.pack(side=tk.TOP, fill=tk.X, padx=4, pady=2)
-        tk.Label(path_frame, text="Output JSON:").pack(side=tk.LEFT)
-        self.out_var = tk.StringVar(value=str(self.out_path))
-        tk.Entry(path_frame, textvariable=self.out_var, width=50).pack(side=tk.LEFT, padx=4)
-
-        # Status label
-        self.status_var = tk.StringVar(value="Click 4 points to define a zone.")
-        tk.Label(self.root, textvariable=self.status_var, anchor=tk.W).pack(
-            side=tk.TOP, fill=tk.X, padx=4
+    for idx, zone in enumerate(completed):
+        color = _ZONE_COLORS[idx % len(_ZONE_COLORS)]
+        pts = zone.polygon.reshape((-1, 1, 2))
+        cv2.fillPoly(overlay, [pts], color)
+        cv2.polylines(out, [pts], isClosed=True, color=color, thickness=2)
+        centroid = zone.polygon.mean(axis=0).astype(int)
+        cv2.putText(
+            out, zone.name, tuple(centroid),
+            cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2, cv2.LINE_AA,
         )
 
-        # Canvas
-        self.canvas = tk.Canvas(self.root, width=self.canvas_w, height=self.canvas_h, bg="black")
-        self.canvas.pack(side=tk.BOTTOM)
-        self.canvas.bind("<Button-1>", self._on_click)
+    cv2.addWeighted(overlay, 0.3, out, 0.7, 0, out)
 
-        self._tk_image = ImageTk.PhotoImage(self.image.resize((self.canvas_w, self.canvas_h)))
-        self.canvas.create_image(0, 0, anchor=tk.NW, image=self._tk_image)
+    if pending:
+        color = _ZONE_COLORS[len(completed) % len(_ZONE_COLORS)]
+        for pt in pending:
+            cv2.circle(out, pt, 5, color, -1)
+        if len(pending) > 1:
+            pts_arr = np.array(pending, dtype=np.int32).reshape((-1, 1, 2))
+            cv2.polylines(out, [pts_arr], isClosed=False, color=color, thickness=2)
 
-        self.root.mainloop()
+    # HUD bar
+    (tw, th), baseline = cv2.getTextSize(_HUD, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
+    cv2.rectangle(out, (0, 0), (tw + 10, th + baseline + 8), (0, 0, 0), -1)
+    cv2.putText(
+        out, _HUD, (5, th + 4),
+        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1, cv2.LINE_AA,
+    )
+    # Zone counter (bottom-left)
+    counter_text = f"Zones defined: {len(completed)}  |  Pending clicks: {len(pending)}/{_VERTICES_PER_SLOT}"
+    h = out.shape[0]
+    cv2.putText(
+        out, counter_text, (5, h - 10),
+        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1, cv2.LINE_AA,
+    )
 
-    def _redraw(self) -> None:
-        self.canvas.delete("all")
-        self.canvas.create_image(0, 0, anchor=tk.NW, image=self._tk_image)
-        # Draw completed zones
-        for i, zone in enumerate(self.zones):
-            color = _ZONE_COLORS[i % len(_ZONE_COLORS)]
-            # Scale back to canvas coords
-            pts = [
-                (int(x / self.scale_x), int(y / self.scale_y))
-                for x, y in zone["polygon"]
-            ]
-            flat = [coord for pt in pts for coord in pt]
-            self.canvas.create_polygon(flat, outline=color, fill=color, stipple="gray25", width=2)
-            cx = sum(p[0] for p in pts) // 4
-            cy = sum(p[1] for p in pts) // 4
-            self.canvas.create_text(cx, cy, text=zone["name"], fill=color,
-                                    font=("Helvetica", 11, "bold"))
-        # Draw pending points
-        color = _ZONE_COLORS[len(self.zones) % len(_ZONE_COLORS)]
-        for pt in self.current_pts:
-            x, y = pt
-            self.canvas.create_oval(x - 4, y - 4, x + 4, y + 4, fill=color, outline=color)
-        if len(self.current_pts) > 1:
-            flat = [coord for pt in self.current_pts for coord in pt]
-            self.canvas.create_line(flat, fill=color, width=2)
+    return out
 
-    def _on_click(self, event: tk.Event) -> None:
-        self.current_pts.append((event.x, event.y))
-        self._redraw()
-        remaining = _VERTICES_PER_SLOT - len(self.current_pts)
-        if remaining > 0:
-            self.status_var.set(f"{remaining} more click(s) to close zone.")
+
+def _mouse_callback(event: int, x: int, y: int, flags: int, state: dict) -> None:
+    """Append (x, y) to state['pending'] on left-button-down."""
+    if event == cv2.EVENT_LBUTTONDOWN:
+        state["pending"].append((x, y))
+        state["redraw"] = True
+
+
+def draw_loop(state,base_frame,counter=0,window=_WINDOW):
+    
+    # funzione per il loop di disegno
+
+
+    while True:
+        # Auto-close after 4 clicks
+        if len(state["pending"]) == _VERTICES_PER_SLOT:
+            slot_idx = len(state["completed"])
+            default_name = f"slot_{slot_idx}"
+            name = get_new_name(counter)
+            if not name:
+                name = default_name
+            polygon = np.array(state["pending"], dtype=np.int32)
+            state["completed"].append(SlotZone(name=name, polygon=polygon))
+            state["pending"] = []
+            state["redraw"] = True
+            print(f"[draw_zones] Zone '{name}' saved.\n")
+            counter += 1
+
+        if state["redraw"]:
+            display = _draw_state(base_frame, state["completed"], state["pending"])
+            cv2.imshow(window, display)
+            state["redraw"] = False
+
+        key = cv2.waitKey(20) & 0xFF
+
+        try:
+            window_closed = cv2.getWindowProperty(window, cv2.WND_PROP_VISIBLE) < 1
+        except cv2.error:
+            window_closed = False
+        if window_closed:  # window closed via X
+            print("[draw_zones] Exiting without saving.")
             return
 
-        # 4 points reached — ask for name and category
-        idx = len(self.zones)
-        name = simpledialog.askstring(
-            "Zone Name", f"Name for zone {idx}:",
-            initialvalue=f"slot_{idx}", parent=self.root
+        if key == ord("u"):  # undo last pending vertex
+            if state["pending"]:
+                state["pending"].pop()
+                state["redraw"] = True
+
+        elif key == ord("z"):  # undo last completed zone
+            if state["completed"]:
+                removed = state["completed"].pop()
+                state["redraw"] = True
+                print(f"[draw_zones] Removed zone '{removed.name}'.")
+
+        elif key == ord("q"):  # save and quit
+            break
+
+        elif key == 27:  # Esc — quit without saving
+            print("[draw_zones] Exiting without saving.")
+            cv2.destroyWindow(_WINDOW)
+            return
+    return state
+
+def draw_parking_from_scratch(uri, base_frame,out,state: dict = {"pending": [], "completed": [], "redraw": True},counter=0) -> None:
+    # funzione per cominciare il draw loop
+    
+    out_path = Path(out) if out else _default_config_path(uri)
+
+
+    frame_height, frame_width = base_frame.shape[:2]
+    print(f"\n[draw_zones] {uri}  {frame_width}x{frame_height}")
+    print(f"[draw_zones] Output will be saved to: {out_path}")
+    print(f"[draw_zones] {_HUD}\n")
+
+    cv2.namedWindow(_WINDOW, cv2.WINDOW_NORMAL)
+    cv2.setMouseCallback(_WINDOW, _mouse_callback, state)
+    state=draw_loop(state,base_frame,counter)
+
+    cv2.destroyWindow(_WINDOW)
+
+    if state["pending"]:
+        print(
+            f"[draw_zones] Warning: discarding {len(state['pending'])} "
+            "unfinished vertices (zone not completed)."
         )
-        if name is None:  # user cancelled
-            self.current_pts.clear()
-            self._redraw()
-            self.status_var.set("Zone cancelled. Click 4 points to define a zone.")
-            return
-        name = name.strip() or f"slot_{idx}"
 
-        category = simpledialog.askstring(
-            "Category", "Category (e.g. 'parking lot') — leave blank to skip:",
-            parent=self.root
-        )
-        category = (category or "").strip() or None
+    if not state["completed"]:
+        print("[draw_zones] No zones defined. Nothing saved.")
+        return
 
-        self.zones.append({
-            "name": name,
-            "polygon": [
-                [int(x * self.scale_x), int(y * self.scale_y)]
-                for x, y in self.current_pts
-            ],
-            "category": category,
-        })
-        self.current_pts.clear()
-        self._redraw()
-        self.status_var.set(
-            f"Zone '{name}' added ({len(self.zones)} total). Click 4 points for the next zone."
-        )
-
-    def _remove_last_zone(self) -> None:
-        if not self.zones:
-            messagebox.showwarning("Warning", "No zones to remove.")
-            return
-        removed = self.zones.pop()
-        self._redraw()
-        self.status_var.set(f"Removed zone '{removed['name']}'.")
-
-    def _save_and_quit(self) -> None:
-        if not self.zones:
-            messagebox.showwarning("Warning", "No zones defined. Nothing to save.")
-            return
-        out = Path(self.out_var.get().strip())
-        out.parent.mkdir(parents=True, exist_ok=True)
-        payload = {
-            "source": self.video_path.name,
-            "frame_width": self.imgw,
-            "frame_height": self.imgh,
-            "zones": self.zones,
-        }
-        with open(out, "w", encoding="utf-8") as f:
-            json.dump(payload, f, indent=2)
-        self.saved_path = out
-        messagebox.showinfo("Saved", f"Saved {len(self.zones)} zone(s) to:\n{out}")
-        self.root.destroy()
+    config = ZoneConfig(
+        source=uri,
+        frame_width=frame_width,
+        frame_height=frame_height,
+        zones=state["completed"],
+    )
+    
+    save_zone_config(config, out_path)
+    print(f"\n[draw_zones] Saved {len(config.zones)} zone(s) to {out_path}")
 
 
-def launch(video_uri: str, out_path: Path | None = None) -> Path | None:
-    """Open the zone drawer for *video_uri* and block until the user saves or quits.
-
-    Returns the Path of the saved JSON file, or None if the user quit without saving.
-    Called by the pipeline before processing starts.
+def get_new_name(counter):
     """
-    video_path = Path(video_uri)
-    if out_path is None:
-        # Derive a filesystem-safe stem from the URI (handles RTSP URLs too)
-        safe_stem = "".join(c if c.isalnum() or c in "-_" else "_" for c in video_path.stem)
-        out_path = Path("data/zones") / f"{safe_stem}_zones.json"
+    TODO:
+    da determinare metodo per differenziare telecamere diverse per suffissi diversi / determinare che si tratta dello stesso spot di un'altra telecamera
+    """
+    
+    
+    return "A"+str(counter)
 
-    drawer = ZoneDrawer(video_path, out_path)
-    return getattr(drawer, "saved_path", None)
+def add_zones(uri):
+    # funzione per aggiungere zone ad uno stream a cui sono già state assegnate delle zone
+
+    cap = cv2.VideoCapture(uri)
+    if not cap.isOpened():
+        raise RuntimeError(f"Cannot open stream: {uri}")
+    ret, base_frame = cap.read()
+    cap.release()
+
+    zones_path = get_zones_path_from_uri(uri)
+
+    if not zones_path.exists():
+        print(f"[demo_pipeline] No zone config found at {zones_path}. Drawing zones now.")
+        draw_parking_from_scratch(uri, base_frame, str(zones_path))
+        if not zones_path.exists():
+            return None
+        
+    zone_config: ZoneConfig = load_zone_config(zones_path)
+    last_name ="A-1"
+    state: dict = {"pending": [], "completed": [], "redraw": True}
+    for i in zone_config.zones:
+        last_name=i.name
+        polygon = np.array(i.polygon, dtype=np.int32)
+        state["completed"].append(SlotZone(name=i.name, polygon=polygon))
+        _draw_state(base_frame, state["completed"], state["pending"])
+    counter = extract_counter_from_name(last_name) + 1
+    draw_parking_from_scratch(uri,base_frame,str(zones_path),state=state,counter=counter)
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description="Draw 4-point parking slot zones from a video")
-    parser.add_argument("--video", default="video/testfile.mp4", help="Input video file")
-    parser.add_argument("--out", default=None,
-                        help="Output JSON path (default: data/zones/<stem>_zones.json)")
-    args = parser.parse_args()
+def remove_zones(uri,zones):
+    # funzione per "rimozione" di zone selezionate
 
-    video_path = Path(args.video)
-    if not video_path.exists():
-        raise FileNotFoundError(f"Video not found: {video_path}")
+    zones_path = get_zones_path_from_uri(uri)
 
-    out_path = Path(args.out) if args.out else _default_out_path(video_path)
-    ZoneDrawer(video_path, out_path)
+    if not zones_path.exists():
+        print(f"[demo_pipeline] No zone config found at {zones_path}.")    
+        return None
+    
+    zone_config: ZoneConfig = load_zone_config(zones_path)
+    
+    state: dict = {"pending": [], "completed": [], "redraw": True}
+    for i in zone_config.zones:
+        if i.name in zones:
+            print(f"[draw zones] Zone {i.name} has been removed")
+            continue
+        polygon = np.array(i.polygon, dtype=np.int32)
+        state["completed"].append(SlotZone(name=i.name, polygon=polygon))   
+    config = ZoneConfig(
+        source=uri,
+        frame_width=zone_config.frame_width,
+        frame_height=zone_config.frame_height,
+        zones=state["completed"],
+    )
+    save_zone_config(config, str(zones_path))
+
+
+def visualize(uri):
+    # funzione per visualizzare uno stream con le zone che gli si sono state assegnate, se non ci sono zone assegnate è solo lo stream
+    window = "visualize"
+    zones_path = Path("parking_slots") / (Path(uri).stem + ".json")
+    zones = []
+
+    # check if there are zones
+    if zones_path.exists():    
+        zone_config: ZoneConfig = load_zone_config(zones_path)
+        zones = zone_config.zones
+
+    # get the zones
+    state: dict = {"pending": [], "completed": [], "redraw": True}
+    for i in zones:
+        polygon = np.array(i.polygon, dtype=np.int32)
+        state["completed"].append(SlotZone(name=i.name, polygon=polygon))
+            
+    
+    cv2.namedWindow(window, cv2.WINDOW_NORMAL)
+
+    cap = cv2.VideoCapture(uri)
+    if not cap.isOpened():
+        raise RuntimeError(f"Cannot open stream: {uri}")
+    
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            break
+        img = _draw_state(frame, state["completed"], state["pending"])
+        
+        cv2.imshow(window, img)
+
+        key = cv2.waitKey(20) & 0xFF
+
+        try:
+            window_closed = cv2.getWindowProperty(window, cv2.WND_PROP_VISIBLE) < 1
+        except cv2.error:
+            window_closed = False
+        if window_closed:  
+            break
+        
+        if key == ord("q"):  # save and quit
+            break
+
+        elif key == 27:  # Esc — quit without saving
+            print("[draw_zones] Exiting without saving.")
+            cv2.destroyWindow(window)
+            return
+    
+    cap.release()
+    cv2.destroyWindow(window)
+    pass
+
+
+def extract_counter_from_name(name):
+    # TODO:
+    #    quando abbiamo una convenzione per la nomenclatura questo ragazzone va cambiato
+    return int(name.split("A")[1])
+
+
+def get_zones_path_from_uri(uri):
+    return Path("parking_slots") / (Path(uri).stem + ".json")
 
 
 if __name__ == "__main__":
-    main()
+    import argparse
+    
+    parser = argparse.ArgumentParser(
+        description="Check parking slot occupancy from a zone config + video",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    parser.add_argument("-a","--add", action="store_true",help="To add zones to a given setup")
+    parser.add_argument("-r","--remove",nargs="+",help="To remove one or more given zones from a given setup")
+    parser.add_argument("-v","--visualize",action="store_true",help="Visualize the current setup with the zones")
+    parser.add_argument("--uri", type=Path, help="Input video")
+    
+    args = parser.parse_args()
+    
+    
+    if args.uri:
+        uri = str(args.uri)
+        
+        
+        if args.add:
+            add_zones(uri)
+        elif args.remove:
+            remove_zones(uri,args.remove)
+        elif args.visualize:
+            visualize(uri);
+        else:
+            cap = cv2.VideoCapture(uri)
+            if not cap.isOpened():
+                raise RuntimeError(f"Cannot open stream: {uri}")
+            ret, frame = cap.read()
+            cap.release()
+            if ret:
+                zones_path = get_zones_path_from_uri(uri)
+                draw_parking_from_scratch(uri, frame, str(zones_path))
+    else:
+        pass
+    pass
