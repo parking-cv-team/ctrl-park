@@ -1,128 +1,61 @@
-"""Zone configuration dataclasses and JSON persistence helpers."""
-
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import numpy as np
 
-
-@dataclass
-class SlotZone:
-    """A named parking zone defined by a polygon.
-
-    Attributes:
-        name: Human-readable zone identifier, e.g. "zone_A".
-        polygon: Polygon vertices as an (N, 2) int32 array of (x, y) pixel coords.
-    """
-
-    name: str
-    polygon: np.ndarray  # shape (N, 2), dtype int32
+from db import SessionLocal, CameraSource, Zone
 
 
-@dataclass
-class ZoneConfig:
-    """Complete zone configuration for a single video source.
+def _load_zone_config_from_db(source: str) -> CameraSource:
+    db = SessionLocal()
+    try:
+        camera = db.query(CameraSource).filter(CameraSource.uri == source).first()
+        if not camera:
+            raise FileNotFoundError(f"Zone config not found in DB for source: {source}")
 
-    Attributes:
-        source: Filename or path of the video this config was annotated on.
-        frame_width: Width in pixels of the reference frame.
-        frame_height: Height in pixels of the reference frame.
-        zones: List of SlotZone definitions.
-    """
+        zones: list[Zone] = []
+        for z in camera.zones:
+            polygon = np.array(z.polygon, dtype=np.int32)
+            zones.append(Zone(name=z.name, polygon=polygon))
 
-    source: str
-    frame_width: int
-    frame_height: int
-    zones: list[SlotZone] = field(default_factory=list)
-
-
-def _default_config_path(video_path: str | Path) -> Path:
-    """Derive the default zone config path for a given video file.
-
-    Convention: data/zones/<video_stem>_zones.json, relative to the
-    repository root (two levels up from this file's directory).
-
-    Args:
-        video_path: Path to the video file.
-
-    Returns:
-        Resolved Path for the zone config JSON.
-    """
-    stem = Path(video_path).stem
-    repo_root = Path(__file__).resolve().parent.parent
-    return repo_root / "parking_slots" / f"{stem}_zones.json"
+        return CameraSource(
+            name=camera.name,
+            uri=camera.uri,
+            frame_width=camera.frame_width or 0,
+            frame_height=camera.frame_height or 0,
+            zones=zones,
+        )
+    finally:
+        db.close()
 
 
-def load_zone_config(config_path: str | Path) -> ZoneConfig:
-    """Load zone definitions from a JSON file.
+def _save_zone_config_to_db(config: CameraSource) -> None:
+    db = SessionLocal()
+    try:
+        camera = db.query(CameraSource).filter(CameraSource.uri == config.uri).first()
+        if not camera:
+            camera = CameraSource(name=config.name, uri=config.uri)
+            db.add(camera)
+            db.flush()
 
-    Args:
-        config_path: Absolute or relative path to the JSON config file.
+        camera.frame_width = config.frame_width
+        camera.frame_height = config.frame_height
 
-    Returns:
-        A ZoneConfig populated with SlotZone entries.
+        # replace existing camera zones with updated list
+        db.query(Zone).filter(Zone.camera_id == camera.id).delete(
+            synchronize_session=False
+        )
 
-    Raises:
-        FileNotFoundError: If config_path does not exist.
-        ValueError: If the JSON structure is invalid or a polygon has fewer than 3 vertices.
-    """
-    config_path = Path(config_path)
-    if not config_path.exists():
-        raise FileNotFoundError(f"Zone config not found: {config_path}")
-
-    with config_path.open("r", encoding="utf-8") as fh:
-        data = json.load(fh)
-
-    required_keys = {"source", "frame_width", "frame_height", "zones"}
-    missing = required_keys - set(data.keys())
-    if missing:
-        raise ValueError(f"Zone config missing keys: {missing}")
-
-    zones: list[SlotZone] = []
-    for entry in data["zones"]:
-        if "name" not in entry or "polygon" not in entry:
-            raise ValueError(f"Zone entry missing 'name' or 'polygon': {entry}")
-        polygon = np.array(entry["polygon"], dtype=np.int32)
-        if polygon.ndim != 2 or polygon.shape[1] != 2:
-            raise ValueError(
-                f"Polygon for zone '{entry['name']}' must be shape (N, 2), got {polygon.shape}"
+        for z in config.zones:
+            db.add(
+                Zone(
+                    name=z.name,
+                    polygon=z.polygon.tolist(),
+                    camera_id=camera.id,
+                )
             )
-        if len(polygon) < 3:
-            raise ValueError(
-                f"Polygon for zone '{entry['name']}' needs at least 3 vertices, got {len(polygon)}"
-            )
-        zones.append(SlotZone(name=entry["name"], polygon=polygon))
 
-    return ZoneConfig(
-        source=data["source"],
-        frame_width=int(data["frame_width"]),
-        frame_height=int(data["frame_height"]),
-        zones=zones,
-    )
-
-
-def save_zone_config(config: ZoneConfig, config_path: str | Path) -> None:
-    """Persist a ZoneConfig to disk as JSON.
-
-    Parent directories are created if absent.
-
-    Args:
-        config: The zone configuration to serialize.
-        config_path: Destination path for the JSON file.
-    """
-    config_path = Path(config_path)
-    config_path.parent.mkdir(parents=True, exist_ok=True)
-
-    data = {
-        "source": config.source,
-        "frame_width": config.frame_width,
-        "frame_height": config.frame_height,
-        "zones": [
-            {"name": z.name, "polygon": z.polygon.tolist()}
-            for z in config.zones
-        ],
-    }
-
-    with config_path.open("w", encoding="utf-8") as fh:
-        json.dump(data, fh, indent=2)
+        db.commit()
+    finally:
+        db.close()

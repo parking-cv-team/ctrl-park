@@ -2,26 +2,32 @@ from sqlalchemy import Column, Float, Integer, String, DateTime, ForeignKey, JSO
 from sqlalchemy.orm import relationship
 from db.database import Base
 import datetime
-    
+
+
 class CameraSource(Base):
     __tablename__ = "camera_sources"
 
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String(255), unique=True, nullable=False)
-    uri = Column(String(255), nullable=False)
-    
-    frames = relationship("ProcessedFrame", back_populates="source")
-    zones = relationship("Zone", back_populates="camera")
+    uri = Column(String(255), unique=True, nullable=False, index=True)
+    frame_width = Column(Integer, nullable=True)
+    frame_height = Column(Integer, nullable=True)
+
+    zones = relationship("Zone", back_populates="camera", cascade="all, delete-orphan")
 
 
 class Zone(Base):
     __tablename__ = "zones"
 
     id = Column(Integer, primary_key=True, index=True)
-    name = Column(String(64), unique=True, nullable=False, index=True)
+    name = Column(String(64), nullable=False, index=True)
     polygon = Column(JSON, nullable=False)
-    category = Column(String(32), nullable=True) #parking lot | road | etc
+    category = Column(String(32), nullable=True)  # parking lot | road | etc
+    camera_id = Column(
+        Integer, ForeignKey("camera_sources.id"), nullable=False, index=True
+    )
 
+    camera = relationship("CameraSource", back_populates="zones")
     occupancies = relationship("ZoneOccupancy", back_populates="zone")
     detections = relationship("Detection", back_populates="zone")
 
