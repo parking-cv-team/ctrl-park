@@ -30,6 +30,7 @@ def create_camera(camera: CameraInput):
     db.add(source)
     db.commit()
     db.refresh(source)
+    db.close()
     return {"id": source.id, "name": source.name, "uri": source.uri}
 
 
@@ -43,6 +44,7 @@ def recent_analytics(limit=50):
 
     db = SessionLocal()
     items = db.query(Detection).order_by(Detection.timestamp.desc()).limit(limit).all()
+    db.close()
     return [
         {
             "id": it.id,
@@ -63,6 +65,7 @@ def cameras(limit=50):
 
     db = SessionLocal()
     items = db.query(CameraSource)
+    db.close()
     return [
         {
             "id": it.id,
@@ -85,6 +88,7 @@ def recent_analytics(camera_id,limit=50):
     items = db.query(func.count(distinct(Detection.id))). \
         filter(Detection.timestamp >= one_minute_ago).filter(Detection.camera_id == camera_id). \
         filter(Detection.class_name == "car").scalar()
+    db.close()
     return items
 
 
@@ -119,5 +123,5 @@ def cameras(camera_id,limit=50):
         else:
             items.append({"zone":z["name"],"occupancy":"occupied"})
 
-
+    db.close()
     return items
