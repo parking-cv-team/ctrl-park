@@ -304,3 +304,76 @@ def trajectory_analysis(body: TrajectoryRequest):
 
     return Response(content=im_bytes, media_type="image/png")
 
+@app.get("/analytics/metrics_report")
+def metrics_report(camera_id, t_start, t_end):
+    with SessionLocal() as db:
+        # 1: KPIs
+
+        # 1. track total distinct tracked thingies
+        total_tracked_by_class = db.query(func.count(distinct(Detection.tracker_id))).\
+                                    filter(Detection.camera_id == camera_id).\
+                                    filter(Detection.timestamp > t_start).\
+                                    filter(Detection.timestamp < t_end).\
+                                    group_by(Detection.class_name)
+        
+        # 2. average confidence, grouped by class
+        avg_confidence_by_class = db.query(func.avg(Detection.confidence)).\
+                                    filter(Detection.camera_id == camera_id).\
+                                    filter(Detection.timestamp > t_start).\
+                                    filter(Detection.timestamp < t_end).\
+                                    group_by(Detection.class_name)
+        
+        # 3. amount of total zones
+        total_zones = db.query(func.count(Zone.id)).\
+                                    filter(Detection.camera_id == camera_id)
+        
+        # 4. amount of maximum and average occupations
+        max_occupations = db.query(func.max(func.count(Detection.id))).\
+                                    filter(Detection.camera_id == camera_id).\
+                                    filter(Detection.timestamp > t_start).\
+                                    filter(Detection.timestamp < t_end).\
+                                    filter(Detection.zone_id != None)
+
+        avg_occupations = db.query(func.avg(func.count(Detection.id))).\
+                                    filter(Detection.camera_id == camera_id).\
+                                    filter(Detection.timestamp > t_start).\
+                                    filter(Detection.timestamp < t_end).\
+                                    filter(Detection.zone_id != None)
+
+        # 5. average tracking time by class
+        track_subquery = db.query(
+                                  Detection.tracker_id.label("t_id"),
+                                  Detection.class_name.label("class_name"),
+                                  func.timestampdiff(func.min(Detection.timestamp), func.max(Detection.timestamp)).label("tdiff")
+                                ).\
+                                filter(Detection.camera_id == camera_id,
+                                        (Detection.timestamp > t_start),
+                                        (Detection.timestamp < t_end),
+                                        Detection.tracker_id != None,
+                                ).\
+                                group_by(
+                                    Detection.tracker_id,
+                                    Detection.tracker_id,
+                                    Detection.class_name
+                                ).\
+                                subquery()
+        
+
+        avg_track_time = db.query(
+            track_subquery.c.class_name,
+            func.avg(track_subquery.c.tdiff)
+        ).group_by(track_subquery.c.class_name).all()
+
+        # 6. track average confidence
+        avg_confidence = db.query(func.avg(Detection.confidence)).\
+                                filter(Detection.camera_id == camera_id,
+                                (Detection.timestamp > t_start),
+                                (Detection.timestamp < t_end)
+                                ).\
+                                group_by(Detection.class_name)
+
+        # part2 (TODO LATER): timeseries
+
+    # start doing stuff :)))))))))))))))))))
+
+    pass 

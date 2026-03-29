@@ -36,7 +36,20 @@ def camera_button():
             st.info('Please select an option and click the button.')
 
         # create the other button to shock scatterplot of tracked items
+        st.text("## Tracking Plots and Heatmaps")
+
         request_tracking_plots(list(filter(lambda x: x["name"]==option, rows))[0]['id'])
+
+        # create button to create main metrics report (KPI, time series blablabla)
+        st.text("## Metrics Report")
+        cols = st.columns(2)
+        with cols[0]:
+            ti = st.datetime_input("Time Start")
+        with cols[1]:
+            tf = st.datetime_input("Time End")
+
+        request_report(list(filter(lambda x: x["name"]==option, rows))[0]['id'],
+                       ti, tf)
 
     except Exception as e:
         st.error(f"Could not fetch analytics: {e}")
@@ -79,6 +92,12 @@ def get_first_frame():
         return frame
     else:
         return None
+
+# logic to make API request to get main metrics
+def request_report(camera_id, t_i, t_f):
+    if st.button("Get Metrics Report"):
+        pass
+    pass 
 
 
 @st.fragment(run_every=10)
