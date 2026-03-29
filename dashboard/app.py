@@ -7,13 +7,32 @@ from dotenv import load_dotenv
 import numpy as np
 from db.models import Zone
 
+#current dashboard structure:
+# 
+#   body:
+#       camera_form()
+#       camera_button():
+#           number_of_cars()
+#           button_to_draw_zones()
+#           camera_video()
+#           occupancy_table()
+
 
 
 load_dotenv()
 
-
 RTSP_URL = "rtsp://localhost:8554/live.stream"
-
+API_BASE = os.getenv("API_BASE_URL", "http://localhost:8000")
+_ZONE_COLORS: list[tuple[int, int, int]] = [
+    (0, 255, 0),  # green
+    (0, 165, 255),  # orange
+    (255, 0, 0),  # blue
+    (0, 0, 255),  # red
+    (255, 255, 0),  # cyan
+    (255, 0, 255),  # magenta
+    (0, 255, 255),  # yellow
+    (128, 0, 128),  # purple
+]
 
 
 def camera_button():
@@ -122,7 +141,6 @@ def draw_table(camera):
     except Exception as e:
         st.error(f"Could not fetch analytics: {e}")
 
-
 def place_a_video(camera):
     uri = camera["uri"]
     cap = cv2.VideoCapture(uri)
@@ -133,17 +151,6 @@ def place_a_video(camera):
     placeholder = st.empty()
     zones = get_zones_to_draw(camera)
     return (cap,placeholder,zones)
-
-_ZONE_COLORS: list[tuple[int, int, int]] = [
-    (0, 255, 0),  # green
-    (0, 165, 255),  # orange
-    (255, 0, 0),  # blue
-    (0, 0, 255),  # red
-    (255, 255, 0),  # cyan
-    (255, 0, 255),  # magenta
-    (0, 255, 255),  # yellow
-    (128, 0, 128),  # purple
-]
 
 def draw_zones(
     canvas: np.ndarray,
@@ -188,33 +195,31 @@ def number_of_cars(camera):
     try:
         response = requests.get(f"{API_BASE}/analytics/cameras/recent",params={"camera_id":camera["id"]})
         response.raise_for_status()
-        st.write(f"Number of cars in the last minute seen by {camera["name"]}: {response.text}")
+        st.write(f"### Number of cars in the last minute seen by {camera["name"]}: {response.text}")
 
     except Exception as e:
         st.error(f"Could not fetch the number of cars: {e}")
     pass
 
+def camera_form():
+    st.write("## Add Camera Source")
+    with st.form("camera-form"):
+        name = st.text_input("Camera name")
+        uri = st.text_input("Camera URI")
+        submitted = st.form_submit_button("Register")
+        if submitted:
+            try:
+                r = requests.post(f"{API_BASE}/camera", json={"name": name, "uri": uri})
+                r.raise_for_status()
+                st.success("Camera registered")
+            except Exception as e:
+                st.error(f"Error: {e}")
 
-API_BASE = os.getenv("API_BASE_URL", "http://localhost:8000")
-
-st.title("Ctrl+Park Dashboard")
-
-
-
-st.write("## Add Camera Source")
-with st.form("camera-form"):
-    name = st.text_input("Camera name")
-    uri = st.text_input("Camera URI")
-    submitted = st.form_submit_button("Register")
-    if submitted:
-        try:
-            r = requests.post(f"{API_BASE}/camera", json={"name": name, "uri": uri})
-            r.raise_for_status()
-            st.success("Camera registered")
-        except Exception as e:
-            st.error(f"Error: {e}")
+def body():
+    st.title("Ctrl+Park Dashboard")
+    camera_form()
+    camera_button()
 
 
-#place_a_video()
-camera_button()
 
+body()
