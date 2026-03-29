@@ -82,7 +82,9 @@ def recent_analytics(camera_id,limit=50):
 
     db = SessionLocal()
     one_minute_ago = datetime.now(timezone.utc) - timedelta(minutes=1)
-    items = db.query(func.count(Detection.id)).filter(Detection.timestamp >= one_minute_ago).filter(Detection.camera_id == camera_id).scalar()
+    items = db.query(func.count(Detection.id)). \
+        filter(Detection.timestamp >= one_minute_ago).filter(Detection.camera_id == camera_id). \
+        filter(Detection.class_name == "car").scalar()
     return items
 
 @app.get("/analytics/zones")
@@ -96,12 +98,24 @@ def cameras(camera_id,limit=50):
     
     db = SessionLocal()
     items = db.query(Zone).filter(Zone.camera_id == camera_id).limit(limit).all()
-    return [
+    zones = [
         {
             "id": it.id,
             "name": str(it.name),
             "category": it.category,
             "camera_id": it.camera_id,
-        }
-        for it in items
-    ]
+        } for it in items]
+    
+    one_minute_ago = datetime.now(timezone.utc) - timedelta(minutes=1)
+    items = []
+    for z in zones:
+        occupancy = db.query(func.count(Detection.id)). \
+            filter(Detection.timestamp >= one_minute_ago).filter(Detection.camera_id == camera_id). \
+            filter(Detection.class_name == "car").filter(Detection.zone_id == z["id"]).scalar()
+        if occupancy == 0:
+            items.append({"zone":z["name"],"occupancy":"not occupied"})
+        else:
+            items.append({"zone":z["name"],"occupancy":"occupied"})
+        
+
+    return items

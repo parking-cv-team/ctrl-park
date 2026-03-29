@@ -45,8 +45,8 @@ def draw_table(camera):
         response = requests.get(f"{API_BASE}/analytics/zones",params={"camera_id":camera["id"]})
         response.raise_for_status()
         rows = response.json()
-        for r in rows:
-            st.table(r)
+        banana = { i["zone"]:i["occupancy"] for i in rows}
+        st.table(banana)
 
     except Exception as e:
         st.error(f"Could not fetch analytics: {e}")
@@ -68,13 +68,13 @@ def place_a_video():
     finally:
         cap.release()
 
-
+@st.fragment(run_every=10)
 def number_of_cars(camera):
     try:
         response = requests.get(f"{API_BASE}/analytics/cameras/recent",params={"camera_id":camera["id"]})
         response.raise_for_status()
         st.write(f"Number of cars in the last minute seen by {camera["name"]}: {response.text}")
-                
+
     except Exception as e:
         st.error(f"Could not fetch analytics: {e}")
     pass
@@ -84,16 +84,7 @@ API_BASE = os.getenv("API_BASE_URL", "http://localhost:8000")
 
 st.title("Ctrl+Park Dashboard")
 
-st.write("## Recent processed frames")
 
-try:
-    response = requests.get(f"{API_BASE}/analytics/recent")
-    response.raise_for_status()
-    rows = response.json()
-    for r in rows:
-        st.write(r)
-except Exception as e:
-    st.error(f"Could not fetch analytics: {e}")
 
 st.write("## Add Camera Source")
 with st.form("camera-form"):
