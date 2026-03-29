@@ -5,7 +5,7 @@ from typing import Tuple, Dict
 
 def load_models(
         mcar_path: str = r'processing/models_weights/best.pt', # path to the car detection model
-        mped_path: str = r'processing/models_weights/yolo26n.pt', # path to the pedestrian detection model
+        mped_path: str = r'processing/models_weights/yolo26s.pt', # path to the pedestrian detection model
 ) -> Tuple[YOLO, YOLO]:
     # Load models to optimize time and memory efficiency
     return (YOLO(mcar_path), YOLO(mped_path))

@@ -86,7 +86,7 @@ def _persist_detections(
         tracker_id = int(tracked.tracker_id[i]) if tracked.tracker_id is not None else None
 
         # filter 1: confidence threshold
-        if confidence < 0.75:
+        if confidence < 0.5:
             continue
 
         # filter 2 & 3: tracker state check

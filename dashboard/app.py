@@ -31,22 +31,47 @@ def camera_button():
             number_of_cars(camera)
             draw_table(camera)
 
-        # create the other button to shock scatterplot of tracked items
-        if st.button("Show tracking map"):
-            camera = list(filter(lambda x: x["name"]==option, rows))[0]
-            r = requests.get(f"{API_BASE}/analytics/trajectory_analysis", params={"camera_id": camera['id']})
-
-            if r.status_code == 200:
-                st.image(r.content, caption="Tracking Scatterplot", use_container_width=True)
-            else:
-                st.error(f"Failed to Fetch Plot: {r.status_code}")
-
         else:
             st.info('Please select an option and click the button.')
-        
+
+        # create the other button to shock scatterplot of tracked items
+        request_tracking_plots(list(filter(lambda x: x["name"]==option, rows))[0]['id'])
+
     except Exception as e:
         st.error(f"Could not fetch analytics: {e}")
-    
+
+# logic to make API request and display the plot
+def request_tracking_plots(camera_id):
+    if st.button("Show tracking map"):
+        frame = get_first_frame()
+        r = requests.get(f"{API_BASE}/analytics/trajectory_analysis", params={"camera_id": camera_id, "frame": frame})
+
+        if r.status_code == 200:
+            st.image(r.content, caption="Tracking Scatterplot", width="stretch")
+        else:
+            st.error(f"Failed to Fetch Plot: {r.status_code}")
+
+# get first frame of RTSP stream
+def get_first_frame():
+    # this should be the logic to obtain the first frame of a RTSP stream, to check if it actually works
+    # if it doesn't, replace with a working logic and uhhhhhhh
+    cap = cv2.VideoCapture(RTSP_URL)
+    if not cap.isOpened():
+        print("here")
+        return None
+
+    try:
+        while True:
+            ret, frame = cap.read()
+            if ret:
+                break
+    finally:
+        cap.release()
+
+    if ret:
+        return frame
+    else:
+        return None
 
 
 @st.fragment(run_every=10)
