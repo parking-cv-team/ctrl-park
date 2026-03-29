@@ -7,8 +7,8 @@ from dotenv import load_dotenv
 import numpy as np
 from db.models import Zone
 
-#current dashboard structure:
-# 
+# current dashboard structure:
+#
 #   body:
 #       camera_form()
 #       camera_button():
@@ -17,7 +17,6 @@ from db.models import Zone
 #           camera_video()
 #           trajectory+heatmap()
 #           occupancy_table()
-
 
 
 load_dotenv()
@@ -37,7 +36,7 @@ _ZONE_COLORS: list[tuple[int, int, int]] = [
 
 
 def camera_button():
-    
+
     try:
         response = requests.get(f"{API_BASE}/analytics/cameras")
         response.raise_for_status()
@@ -51,55 +50,65 @@ def camera_button():
             st.session_state.show_tracking_map = False
 
         option = st.selectbox(
-            '## Choose a camera to see occupancy:', tuple([i["name"] for i in rows])
+            "## Choose a camera to see occupancy:", tuple([i["name"] for i in rows])
         )
 
-        if st.button('Confirm Selection'):
+        if st.button("Confirm Selection"):
             st.session_state.confirmed_camera = option
             st.session_state.show_zones = False
             st.session_state.show_tracking_map = False
 
-
         if st.session_state.confirmed_camera is not None:
-            camera = list(filter(lambda x: x["name"]==st.session_state.confirmed_camera,rows))[0]
-            st.success(f'You confirmed: {st.session_state.confirmed_camera}')
-
+            camera = list(
+                filter(lambda x: x["name"] == st.session_state.confirmed_camera, rows)
+            )[0]
+            st.success(f"You confirmed: {st.session_state.confirmed_camera}")
 
             number_of_cars(camera)
 
-            if st.button('Show zones'):
+            if st.button("Show zones"):
                 st.session_state.show_zones = not st.session_state.show_zones
             if st.button("Show tracking map"):
-                st.session_state.show_tracking_map = not st.session_state.show_tracking_map
+                st.session_state.show_tracking_map = (
+                    not st.session_state.show_tracking_map
+                )
 
-            cap, placeholder, zones = place_a_video(camera)
+            cap, placeholder, zones = place_a_video(
+                camera
+            )  # pyright: ignore[reportGeneralTypeIssues]
             if st.session_state.show_tracking_map:
-                request_tracking_plots(list(filter(lambda x: x["name"]==option, rows))[0]['id'])
+                request_tracking_plots(
+                    list(filter(lambda x: x["name"] == option, rows))[0]["id"]
+                )
             draw_table(camera)
             continue_video(cap, placeholder, zones)
         else:
-            st.info('Please select an option and click the button.')
+            st.info("Please select an option and click the button.")
 
         # create the other button to shock scatterplot of tracked items
-        request_tracking_plots(list(filter(lambda x: x["name"]==option, rows))[0]['id'])
+        request_tracking_plots(
+            list(filter(lambda x: x["name"] == option, rows))[0]["id"]
+        )
 
     except Exception as e:
         st.error(f"Could not fetch analytics: {e}")
 
+
 # logic to make API request and display the plot
 def request_tracking_plots(camera_id):
-    #if st.button("Show tracking map"):
+    # if st.button("Show tracking map"):
     frame = get_first_frame()
     payload = {"camera_id": camera_id}
     if frame is not None:
         _, buf = cv2.imencode(".png", frame)
-        payload["frame"] = base64.b64encode(buf).decode("utf-8")
+        payload["frame"] = base64.b64encode(buf).decode("utf-8")  # type: ignore
     r = requests.post(f"{API_BASE}/analytics/trajectory_analysis", json=payload)
 
     if r.status_code == 200:
-        st.image(r.content, caption="Tracking Scatterplot", width="stretch")
+        st.image(r.content, caption="Tracking Scatterplot", width="stretch")  # type: ignore
     else:
         st.error(f"Failed to Fetch Plot: {r.status_code}")
+
 
 # get first frame of RTSP stream
 def get_first_frame():
@@ -112,7 +121,7 @@ def get_first_frame():
     try:
         for i in range(30):
             ret, frame = cap.read()
-            
+
         while True:
             ret, frame = cap.read()
             if ret:
@@ -125,10 +134,12 @@ def get_first_frame():
     else:
         return None
 
-    
+
 def get_zones_to_draw(camera):
     try:
-        response = requests.get(f"{API_BASE}/analytics/zones/poly",params={"camera_id":camera["id"]})
+        response = requests.get(
+            f"{API_BASE}/analytics/zones/poly", params={"camera_id": camera["id"]}
+        )
         response.raise_for_status()
         rows = response.json()
         return list(rows)
@@ -136,17 +147,21 @@ def get_zones_to_draw(camera):
     except Exception as e:
         st.error(f"Could not fetch zones to draw: {e}")
 
+
 @st.fragment(run_every=10)
 def draw_table(camera):
     try:
-        response = requests.get(f"{API_BASE}/analytics/zones",params={"camera_id":camera["id"]})
+        response = requests.get(
+            f"{API_BASE}/analytics/zones", params={"camera_id": camera["id"]}
+        )
         response.raise_for_status()
         rows = response.json()
-        zone = { str(i["zone"]):i["occupancy"] for i in rows}
+        zone = {str(i["zone"]): i["occupancy"] for i in rows}
         st.table(zone)
 
     except Exception as e:
         st.error(f"Could not fetch analytics: {e}")
+
 
 def place_a_video(camera):
     uri = camera["uri"]
@@ -157,11 +172,10 @@ def place_a_video(camera):
 
     placeholder = st.empty()
     zones = get_zones_to_draw(camera)
-    return (cap,placeholder,zones)
+    return (cap, placeholder, zones)
 
-def draw_zones(
-    canvas: np.ndarray,
-    completed: list[Zone]) -> np.ndarray:
+
+def draw_zones(canvas: np.ndarray, completed: list[Zone]) -> np.ndarray:
     """Render zones onto a copy of canvas."""
     out = canvas.copy()
     overlay = canvas.copy()
@@ -182,31 +196,46 @@ def draw_zones(
             2,
             cv2.LINE_AA,
         )
-    
+
     return out
 
-def continue_video(cap,placeholder,zones=[]):
-    zones=[Zone(id=int(z["id"]), name=str(z["name"]), polygon=np.array(z["polygon"], dtype=np.int32), camera_id=["camera_id"]) for z in zones]
+
+def continue_video(cap, placeholder, zones=[]):
+    zones = [
+        Zone(
+            id=int(z["id"]),
+            name=str(z["name"]),
+            polygon=np.array(z["polygon"], dtype=np.int32),
+            camera_id=["camera_id"],
+        )
+        for z in zones
+    ]
 
     while True:
         ret, frame = cap.read()
         if st.session_state.show_zones:
-            frame = draw_zones(frame,zones)
+            frame = draw_zones(frame, zones)
         if not ret:
             break
         placeholder.image(frame, channels="BGR")
     cap.release()
 
+
 @st.fragment(run_every=10)
 def number_of_cars(camera):
     try:
-        response = requests.get(f"{API_BASE}/analytics/cameras/recent",params={"camera_id":camera["id"]})
+        response = requests.get(
+            f"{API_BASE}/analytics/cameras/recent", params={"camera_id": camera["id"]}
+        )
         response.raise_for_status()
-        st.write(f"### Number of cars in the last minute seen by {camera["name"]}: {response.text}")
+        st.write(
+            f"### Number of cars in the last minute seen by {camera['name']}: {response.text}"
+        )
 
     except Exception as e:
         st.error(f"Could not fetch the number of cars: {e}")
     pass
+
 
 def camera_form():
     st.write("## Add Camera Source")
@@ -222,11 +251,11 @@ def camera_form():
             except Exception as e:
                 st.error(f"Error: {e}")
 
+
 def body():
     st.title("Ctrl+Park Dashboard")
     camera_form()
     camera_button()
-
 
 
 body()
