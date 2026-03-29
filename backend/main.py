@@ -6,6 +6,7 @@ from db import init_db, SessionLocal, CameraSource, Zone
 from db.models import Detection
 from datetime import datetime, timedelta, timezone
 from sqlalchemy import func,distinct
+import numpy as np
 
 import pandas as pd
 import matplotlib
@@ -106,8 +107,6 @@ def recent_analytics(camera_id,limit=50):
         filter(Detection.class_name == "car").scalar()
     db.close()
     return items
-
-
 
 @app.get("/analytics/zones")
 def cameras(camera_id,limit=50):
@@ -290,3 +289,17 @@ def trajectory_analysis(body: TrajectoryRequest):
 
     return Response(content=im_bytes, media_type="image/png")
 
+@app.get("/analytics/zones/poly")
+def cameras(camera_id,limit=50):
+    limit = int(limit)
+    if not limit:
+        raise HTTPException(status_code=400, detail="Limit must be an integer")
+    if limit < 1:
+        raise HTTPException(status_code=400, detail="Limit must be positive")
+
+    
+    db = SessionLocal()
+    items = db.query(Zone).filter(Zone.camera_id == camera_id).limit(limit).all()
+    db.close()
+    
+    return items
