@@ -166,9 +166,13 @@ def trajectory_analysis(body: TrajectoryRequest):
     df_cars_moving = (pd.DataFrame(rows_cars_moving))
     df_pedestrians = (pd.DataFrame(rows_pedestrians))
 
-    fig, axes = plt.subplots(1, 3, figsize=(25, 7))
+    fig = plt.figure(layout="constrained", figsize=(17, 12))
+    fig.suptitle("Detections Scatterplot and Heatmap(s)")
+    gs = fig.add_gridspec(2, 2)
 
-    ax = axes[0]
+    ax = fig.add_subplot(gs[0, :])
+    ax2 = fig.add_subplot(gs[1, 0])
+    ax3 = fig.add_subplot(gs[1, 1])
 
     if body.frame is not None:
         img_bytes = base64.b64decode(body.frame)
@@ -177,6 +181,8 @@ def trajectory_analysis(body: TrajectoryRequest):
         frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
         ax.invert_yaxis()
         ax.imshow(frame_rgb)
+        ax2.imshow(frame_rgb, alpha=0.5)
+        ax3.imshow(frame_rgb, alpha=0.5)
 
     ax.scatter(
         df_cars_parked['cx'], df_cars_parked['cy'], color = "red", marker="s", alpha=0.3, label="Parked car", s=20
@@ -192,6 +198,11 @@ def trajectory_analysis(body: TrajectoryRequest):
 
     ax.set_xlabel("x position (pixel)")
     ax.set_ylabel("y position (pixel)")
+    ax2.set_xlabel("x position (pixel)")
+    ax2.set_ylabel("y position (pixel)")
+    ax3.set_xlabel("x position (pixel)")
+    ax3.set_ylabel("y position (pixel)")
+
     ax.set_title("Detected Objects Scatterplot and Trajectories")
 
     for track_id, g in df_pedestrians.sort_values("id").groupby("tracker_id"):
@@ -227,7 +238,6 @@ def trajectory_analysis(body: TrajectoryRequest):
     ax.grid()
 
     # plot 2d histogram
-    ax2 = axes[1]
 
     print(ax.get_xlim(), ax.get_ylim())
 
@@ -242,8 +252,9 @@ def trajectory_analysis(body: TrajectoryRequest):
         h_blur.T,
         origin="lower",
         extent=[xe1[0], xe1[-1], ye1[0], ye1[-1]],
-        cmap="cividis",
-        aspect="auto"
+        cmap="magma",
+        aspect="auto",
+        alpha=0.7
     )
 
     ax2.set_title("Density Heatmap (parked cars only)")
@@ -253,8 +264,6 @@ def trajectory_analysis(body: TrajectoryRequest):
         df_cars_moving[["cx", "cy"]],
         df_pedestrians[["cx", "cy"]]
     ], ignore_index=True)
-
-    ax3 = axes[2]
 
     h, xe1, ye1= np.histogram2d(all_df["cx"], all_df["cy"],
                    range=[ax.get_xlim(), ax.get_ylim()[::-1]],
@@ -267,15 +276,20 @@ def trajectory_analysis(body: TrajectoryRequest):
         h_blur.T,
         origin="lower",
         extent=[xe1[0], xe1[-1], ye1[0], ye1[-1]],
-        cmap="cividis",
-        aspect="auto"
+        cmap="magma",
+        aspect="auto",
+        alpha=0.7
     )
 
     ax3.set_title("Density Heatmap (moving cars + pedestrians)")
-    
+
+
     # invert y axis-es to convert coordinates
     ax2.invert_yaxis()
     ax3.invert_yaxis()
+
+
+
 
     # convert to bytes and return API response
 
