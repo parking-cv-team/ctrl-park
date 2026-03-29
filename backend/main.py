@@ -2,10 +2,11 @@ from fastapi import FastAPI, HTTPException, Response
 from pydantic import BaseModel
 import os
 from dotenv import load_dotenv
-from db import init_db, SessionLocal, CameraSource, Zone
+from db import init_db, SessionLocal, CameraSource, Zone,ZoneOccupancy
 from db.models import Detection
 from datetime import datetime, timedelta, timezone
 from sqlalchemy import func,distinct,text
+import numpy as np
 
 import pandas as pd
 import matplotlib
@@ -100,14 +101,15 @@ def recent_analytics(camera_id,limit=50):
         raise HTTPException(status_code=400, detail="Limit must be positive")
 
     db = SessionLocal()
-    one_minute_ago = datetime.now(timezone.utc) - timedelta(minutes=1)
-    items = db.query(func.count(distinct(Detection.id))). \
-        filter(Detection.timestamp >= one_minute_ago).filter(Detection.camera_id == camera_id). \
-        filter(Detection.class_name == "car").scalar()
+    
+    items = db.query(func.count(distinct(Detection.tracker_id))). \
+        filter(Detection.camera_id == camera_id). \
+        filter(Detection.class_name == "car").filter(Detection.event_type != "departure"). \
+        order_by(Detection.id.desc()).scalar()
+
+
     db.close()
     return items
-
-
 
 @app.get("/analytics/zones")
 def cameras(camera_id,limit=50):
@@ -118,7 +120,7 @@ def cameras(camera_id,limit=50):
         raise HTTPException(status_code=400, detail="Limit must be positive")
 
     db = SessionLocal()
-    items = db.query(Zone).filter(Zone.camera_id == camera_id).limit(limit).all()
+    items = db.query(Zone).filter(Zone.camera_id == camera_id).all()
     zones = [
         {
             "id": it.id,
@@ -127,13 +129,18 @@ def cameras(camera_id,limit=50):
             "camera_id": it.camera_id,
         } for it in items]
     
-    one_minute_ago = datetime.now(timezone.utc) - timedelta(minutes=1)
     items = []
     for z in zones:
-        occupancy = db.query(func.count(Detection.id)). \
-            filter(Detection.timestamp >= one_minute_ago).filter(Detection.camera_id == camera_id). \
-            filter(Detection.class_name == "car").filter(Detection.zone_id == z["id"]).scalar()
-        if occupancy == 0:
+        occupancy = db.query(ZoneOccupancy). \
+            filter(ZoneOccupancy.zone_id == z["id"]).order_by(ZoneOccupancy.id.desc())
+        
+        o = [
+        {
+            "id": it.id,
+            "tracker":it.tracker_id
+        } for it in occupancy]
+
+        if len(o)==0 or o[0]["tracker"] is None:
             items.append({"zone":z["name"],"occupancy":"not occupied"})
         else:
             items.append({"zone":z["name"],"occupancy":"occupied"})
@@ -493,3 +500,17 @@ def metrics_report_timeseries(camera_id, t_start, t_end):
             "ts_parked": pd.DataFrame(parked_vehicles_ts).to_dict(orient="records"),
         }
      
+@app.get("/analytics/zones/poly")
+def cameras(camera_id,limit=50):
+    limit = int(limit)
+    if not limit:
+        raise HTTPException(status_code=400, detail="Limit must be an integer")
+    if limit < 1:
+        raise HTTPException(status_code=400, detail="Limit must be positive")
+
+    
+    db = SessionLocal()
+    items = db.query(Zone).filter(Zone.camera_id == camera_id).limit(limit).all()
+    db.close()
+    
+    return items
