@@ -73,7 +73,7 @@ def capture_stream(uri: str, out_queue: Queue):
                 if not ret:
                     break
                 if count % skip == 0:
-                    out_queue.put((uri, frame, time.time(), count))
+                    out_queue.put((uri, frame, time.time(), count, source_fps))
                 _log_queue_size(out_queue.qsize())
                 if out_queue.qsize() > max_queue_size:
                     while out_queue.qsize() > queue_threshold:
@@ -90,7 +90,7 @@ def capture_stream(uri: str, out_queue: Queue):
                 ret, frame = cap.read()
                 if not ret:
                     break
-                out_queue.put((uri, frame, time.time(), count))
+                out_queue.put((uri, frame, time.time(), count, source_fps))
                 if out_queue.qsize() > max_queue_size:
                     while out_queue.qsize() > queue_threshold:
                         time.sleep(time_sleep)
@@ -99,4 +99,4 @@ def capture_stream(uri: str, out_queue: Queue):
             cap.release()
 
     # signal end, arbitrarily encoded by yours truly, probably needs chaning, so TODO
-    out_queue.put((uri, None, None, None))
+    out_queue.put((uri, None, None, None, None))

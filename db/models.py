@@ -46,6 +46,7 @@ class Detection(Base):
     class_id = Column(Integer, nullable=False)
     class_name = Column(String(32), nullable=False)
     confidence = Column(Float, nullable=False)
+    event_type = Column(String(32), default="detection", nullable=False)  # "detection" or "departure"
 
     x1 = Column(Float, nullable=False)
     y1 = Column(Float, nullable=False)
