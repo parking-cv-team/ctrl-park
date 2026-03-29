@@ -5,7 +5,7 @@ from dotenv import load_dotenv
 from db import init_db, SessionLocal, CameraSource, Zone
 from db.models import Detection
 from datetime import datetime, timedelta, timezone
-from sqlalchemy import func
+from sqlalchemy import func,distinct
 
 load_dotenv()
 
@@ -82,10 +82,12 @@ def recent_analytics(camera_id,limit=50):
 
     db = SessionLocal()
     one_minute_ago = datetime.now(timezone.utc) - timedelta(minutes=1)
-    items = db.query(func.count(Detection.id)). \
+    items = db.query(func.count(distinct(Detection.id))). \
         filter(Detection.timestamp >= one_minute_ago).filter(Detection.camera_id == camera_id). \
         filter(Detection.class_name == "car").scalar()
     return items
+
+
 
 @app.get("/analytics/zones")
 def cameras(camera_id,limit=50):
