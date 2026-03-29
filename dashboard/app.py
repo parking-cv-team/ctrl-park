@@ -15,6 +15,7 @@ from db.models import Zone
 #           number_of_cars()
 #           button_to_draw_zones()
 #           camera_video()
+#           trajectory+heatmap()
 #           occupancy_table()
 
 
@@ -46,6 +47,8 @@ def camera_button():
             st.session_state.confirmed_camera = None
         if "show_zones" not in st.session_state:
             st.session_state.show_zones = False
+        if "show_tracking_map" not in st.session_state:
+            st.session_state.show_tracking_map = False
 
         option = st.selectbox(
             '## Choose a camera to see occupancy:', tuple([i["name"] for i in rows])
@@ -54,7 +57,7 @@ def camera_button():
         if st.button('Confirm Selection'):
             st.session_state.confirmed_camera = option
             st.session_state.show_zones = False
-        
+            st.session_state.show_tracking_map = False
 
 
         if st.session_state.confirmed_camera is not None:
@@ -66,8 +69,12 @@ def camera_button():
 
             if st.button('Show zones'):
                 st.session_state.show_zones = not st.session_state.show_zones
+            if st.button("Show tracking map"):
+                st.session_state.show_tracking_map = not st.session_state.show_tracking_map
 
             cap, placeholder, zones = place_a_video(camera)
+            if st.session_state.show_tracking_map:
+                request_tracking_plots(list(filter(lambda x: x["name"]==option, rows))[0]['id'])
             draw_table(camera)
             continue_video(cap, placeholder, zones)
         else:
@@ -81,18 +88,18 @@ def camera_button():
 
 # logic to make API request and display the plot
 def request_tracking_plots(camera_id):
-    if st.button("Show tracking map"):
-        frame = get_first_frame()
-        payload = {"camera_id": camera_id}
-        if frame is not None:
-            _, buf = cv2.imencode(".png", frame)
-            payload["frame"] = base64.b64encode(buf).decode("utf-8")
-        r = requests.post(f"{API_BASE}/analytics/trajectory_analysis", json=payload)
+    #if st.button("Show tracking map"):
+    frame = get_first_frame()
+    payload = {"camera_id": camera_id}
+    if frame is not None:
+        _, buf = cv2.imencode(".png", frame)
+        payload["frame"] = base64.b64encode(buf).decode("utf-8")
+    r = requests.post(f"{API_BASE}/analytics/trajectory_analysis", json=payload)
 
-        if r.status_code == 200:
-            st.image(r.content, caption="Tracking Scatterplot", width="stretch")
-        else:
-            st.error(f"Failed to Fetch Plot: {r.status_code}")
+    if r.status_code == 200:
+        st.image(r.content, caption="Tracking Scatterplot", width="stretch")
+    else:
+        st.error(f"Failed to Fetch Plot: {r.status_code}")
 
 # get first frame of RTSP stream
 def get_first_frame():
@@ -183,7 +190,7 @@ def continue_video(cap,placeholder,zones=[]):
 
     while True:
         ret, frame = cap.read()
-        if len(zones)!=0:
+        if st.session_state.show_zones:
             frame = draw_zones(frame,zones)
         if not ret:
             break

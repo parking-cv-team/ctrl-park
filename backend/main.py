@@ -103,7 +103,10 @@ def recent_analytics(camera_id,limit=50):
     
     items = db.query(func.count(distinct(Detection.tracker_id))). \
         filter(Detection.camera_id == camera_id). \
-        filter(Detection.class_name == "car").scalar()
+        filter(Detection.class_name == "car").filter(Detection.event_type != "departure"). \
+        order_by(Detection.id.desc()).scalar()
+
+
     db.close()
     return items
 
