@@ -4,7 +4,12 @@ import os
 import cv2
 import base64
 from dotenv import load_dotenv
+import pandas as pd 
+import seaborn as sns
+import json
 
+import matplotlib.pyplot as plt 
+import matplotlib.ticker as ticker
 
 load_dotenv()
 
@@ -41,7 +46,7 @@ def camera_button():
         request_tracking_plots(list(filter(lambda x: x["name"]==option, rows))[0]['id'])
 
         # create button to create main metrics report (KPI, time series blablabla)
-        st.text("## Metrics Report")
+        st.text("## Metrics Report and Time Series")
         cols = st.columns(2)
         with cols[0]:
             ti = st.datetime_input("Time Start")
@@ -49,6 +54,9 @@ def camera_button():
             tf = st.datetime_input("Time End")
 
         request_report(list(filter(lambda x: x["name"]==option, rows))[0]['id'],
+                       ti, tf)
+        
+        request_timeseries(list(filter(lambda x: x["name"]==option, rows))[0]['id'],
                        ti, tf)
 
     except Exception as e:
@@ -96,8 +104,68 @@ def get_first_frame():
 # logic to make API request to get main metrics
 def request_report(camera_id, t_i, t_f):
     if st.button("Get Metrics Report"):
-        pass
-    pass 
+        # step 1: KPIs
+        r = requests.get(f"{API_BASE}/analytics/metrics_report/kpi", params={'camera_id': camera_id,
+                                                                         't_start': t_i,
+                                                                         't_end': t_f})
+        
+        if r.status_code == 200:
+            r_s = r.content.decode()
+            r_j = json.loads(r_s)
+
+            st.dataframe(pd.DataFrame(r_j['total_tracked_by_class']))
+            st.dataframe(pd.DataFrame(r_j['avg_confidence_by_class']))
+            st.dataframe(pd.DataFrame(r_j['total_zones']))
+            st.dataframe(pd.DataFrame(r_j['max_occupations']))
+            st.dataframe(pd.DataFrame(r_j['avg_occupations']))
+            st.dataframe(pd.DataFrame(r_j['avg_track_time']))
+            st.dataframe(pd.DataFrame(r_j['avg_confidence']))
+
+        else:
+            st.error(f"Could not fetch summary... {r.status_code}")            
+
+def request_timeseries(camera_id, t_i, t_f):
+    # TODO: see if i can map the timestamps better, integers make no sense...
+    
+    if st.button("Get Timeseries Report"):
+        # step 1: KPIs
+        r = requests.get(f"{API_BASE}/analytics/metrics_report/timeseries", params={'camera_id': camera_id,
+                                                                         't_start': t_i,
+                                                                         't_end': t_f})
+        
+        if r.status_code == 200:
+            r_s = r.content.decode()
+            r_j = json.loads(r_s)
+
+            ts_1 = (pd.DataFrame(r_j['ts_confidence']))
+            ts_2 = (pd.DataFrame(r_j['ts_objects']))
+            ts_3 = (pd.DataFrame(r_j['ts_parked']))
+
+            fig, axes = plt.subplots(3, 1, figsize=(5, 6))
+
+            fig.suptitle("Timeseries Reports")
+
+            axes[0].set_title("Average Confidence")
+            axes[1].set_title("Number of tracked objects")
+            axes[2].set_title("Number of parked vehicles")
+
+            sns.lineplot(data=ts_1.reset_index(), ax=axes[0], x=ts_1.index, y="avg_confidence", hue="class_name", palette="Set1")
+            sns.lineplot(data=ts_2.reset_index(), ax=axes[1], x=ts_2.index, y="num_tracked", hue="class_name", palette="Set1")
+            sns.lineplot(data=ts_3.reset_index(), ax=axes[2], x=ts_3.index, y="num_parked_vehicles", palette="Set1")
+
+            axes[1].yaxis.set_major_locator(ticker.MaxNLocator(integer=True))
+            axes[2].yaxis.set_major_locator(ticker.MaxNLocator(integer=True))
+
+            axes[0].yaxis.grid()
+            axes[1].yaxis.grid()
+            axes[2].yaxis.grid()
+
+            fig.tight_layout()
+
+            st.pyplot(fig)
+
+        else:
+            st.error(f"Could not fetch summary... {r.status_code}")            
 
 
 @st.fragment(run_every=10)
