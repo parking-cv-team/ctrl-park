@@ -14,7 +14,6 @@ load_dotenv()
 # Load config from .env
 DEFAULT_FRAME_RATE = int(os.getenv("FRAME_RATE", "25"))
 LOST_TRACK_BUFFER = int(os.getenv("LOST_TRACK_BUFFER", "30"))
-CONFIDENCE_THRESHOLD = float(os.getenv("DETECTION_CONFIDENCE_THRESHOLD", "0.5"))
 MIN_SAVE_INTERVAL = float(os.getenv("MIN_DETECTION_SAVE_INTERVAL", "1.0"))
 BBOX_MOVEMENT_THRESHOLD = int(os.getenv("BBOX_MOVEMENT_THRESHOLD", "5"))
 OCCUPANCY_TRANSITION_BUFFER = int(os.getenv("OCCUPANCY_TRANSITION_BUFFER_MINUTES", "2")) * 60
@@ -89,13 +88,10 @@ def _persist_detections(
     
     for i in range(len(tracked)):
         x1, y1, x2, y2 = tracked.xyxy[i]
-        confidence = float(tracked.confidence[i]) if tracked.confidence is not None else 1.0
+        
+        confidence = float(tracked.confidence[i]) if tracked.confidence is not None else 1.0 # ?
         tracker_id = int(tracked.tracker_id[i]) if tracked.tracker_id is not None else None
-        
-        # Filter confidence
-        if confidence < CONFIDENCE_THRESHOLD:
-            continue
-        
+
         # Filter duplicate/noise
         if not _detection_passes_filters(class_name, tracker_id, timestamp, x1, y1, x2, y2):
             continue
@@ -221,10 +217,6 @@ def _check_departures(db, timestamp: float) -> None:
         state["last_seen_timestamp"] = None
         state["new_tracker_id"] = None
         state["new_tracker_timestamp"] = None
-
-
-
-
 
 def processing_loop(in_queue: Queue, in_zones: List[Zone]):
     """Main processing loop."""
