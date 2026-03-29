@@ -116,6 +116,6 @@ def cameras(camera_id,limit=50):
             items.append({"zone":z["name"],"occupancy":"not occupied"})
         else:
             items.append({"zone":z["name"],"occupancy":"occupied"})
-        
+
 
     return items

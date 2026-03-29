@@ -37,7 +37,7 @@ def camera_button():
     except Exception as e:
         st.error(f"Could not fetch analytics: {e}")
     
-    
+
 
 @st.fragment(run_every=10)
 def draw_table(camera):
@@ -45,8 +45,8 @@ def draw_table(camera):
         response = requests.get(f"{API_BASE}/analytics/zones",params={"camera_id":camera["id"]})
         response.raise_for_status()
         rows = response.json()
-        banana = { i["zone"]:i["occupancy"] for i in rows}
-        st.table(banana)
+        zone = { str(i["zone"]):i["occupancy"] for i in rows}
+        st.table(zone)
 
     except Exception as e:
         st.error(f"Could not fetch analytics: {e}")
