@@ -7,13 +7,10 @@ from dotenv import load_dotenv
 from typing import List
 from db.models import CameraSource, Zone
 from .zones import _load_zone_config_from_db
-from .draw_zones import draw_parking_from_scratch
 from pathlib import Path
 
 
 load_dotenv()
-
-
 
 
 def get_parking_zones(uri, frame):
@@ -21,16 +18,18 @@ def get_parking_zones(uri, frame):
         zone_config: CameraSource = _load_zone_config_from_db(source=uri)
     except FileNotFoundError:
         print(
-            f"[demo_pipeline] No zone config found in DB for {uri}. Drawing zones now."
+            f"[camera_ingest] No zone config found in DB for: {uri}\n"
+            f"                Run calibration first:\n"
+            f"                  python -m processing.calibrate_parking --uri {uri}"
         )
-        draw_parking_from_scratch(uri, frame, None)
-        try:
-            zone_config = _load_zone_config_from_db(source=uri)
-        except FileNotFoundError:
-            return None
+        return None
 
     if not zone_config.zones:
-        print("[demo_pipeline] Zone config has no zones.")
+        print(
+            f"[camera_ingest] Zone config has no zones for: {uri}\n"
+            f"                Re-run calibration:\n"
+            f"                  python -m processing.calibrate_parking --uri {uri}"
+        )
         return None
 
     return zone_config.zones

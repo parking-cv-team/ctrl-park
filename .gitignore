@@ -218,3 +218,7 @@ data/
 parking_slots/
 processing/models_weights_best2.pt
 .DS_Store
+
+# calibration outputs (keep JSON configs, ignore generated PNGs)
+calibration/output/*.png
+calibration/configs/*.json
