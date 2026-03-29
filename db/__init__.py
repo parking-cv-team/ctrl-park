@@ -1,6 +1,6 @@
 # Database module
 from .database import SessionLocal, Base, init_db
-from .models import CameraSource, Zone, Detection, ZoneOccupancy
+from .models import CameraSource, Zone, Detection, ZoneOccupancy, MappedZone
 
 __all__ = [
     "SessionLocal",
@@ -10,4 +10,5 @@ __all__ = [
     "Zone",
     "Detection",
     "ZoneOccupancy",
+    "MappedZone",
 ]

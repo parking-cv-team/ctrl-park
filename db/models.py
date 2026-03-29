@@ -12,8 +12,19 @@ class CameraSource(Base):
     uri = Column(String(255), unique=True, nullable=False, index=True)
     frame_width = Column(Integer, nullable=True)
     frame_height = Column(Integer, nullable=True)
+    homography = Column(JSON, nullable=True)  # 3×3 matrix [[a,b,c],[d,e,f],[g,h,i]]
 
     zones = relationship("Zone", back_populates="camera", cascade="all, delete-orphan")
+
+
+class MappedZone(Base):
+    """Physical parking slot in the unified multi-camera metric reference frame."""
+    __tablename__ = "mapped_zones"
+
+    id = Column(Integer, primary_key=True, index=True)
+    polygon_global_metric = Column(JSON, nullable=False)  # [[x_m, y_m], ...] in cam-0 global space
+
+    zones = relationship("Zone", back_populates="mapped_zone")
 
 
 class Zone(Base):
@@ -21,13 +32,18 @@ class Zone(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String(64), nullable=False, index=True)
-    polygon = Column(JSON, nullable=False)
-    category = Column(String(32), nullable=True)  # parking lot | road | etc
+    polygon = Column(JSON, nullable=False)           # pixel coords [[x, y], ...] — used by worker.py
+    category = Column(String(32), nullable=True)    # parking lot | road | etc
     camera_id = Column(
         Integer, ForeignKey("camera_sources.id"), nullable=False, index=True
     )
+    polygon_metric = Column(JSON, nullable=True)    # metric coords [[x_m, y_m], ...] (camera-local)
+    mapped_zone_id = Column(
+        Integer, ForeignKey("mapped_zones.id"), nullable=True, index=True
+    )
 
     camera = relationship("CameraSource", back_populates="zones")
+    mapped_zone = relationship("MappedZone", back_populates="zones")
     occupancies = relationship("ZoneOccupancy", back_populates="zone")
     detections = relationship("Detection", back_populates="zone")
 
