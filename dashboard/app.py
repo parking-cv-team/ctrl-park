@@ -30,7 +30,17 @@ def camera_button():
             camera = list(filter(lambda x: x["name"]==option, rows))[0]
             number_of_cars(camera)
             draw_table(camera)
-            
+
+        # create the other button to shock scatterplot of tracked items
+        if st.button("Show tracking map"):
+            camera = list(filter(lambda x: x["name"]==option, rows))[0]
+            r = requests.get(f"{API_BASE}/analytics/trajectory_analysis", params={"camera_id": camera['id']})
+
+            if r.status_code == 200:
+                st.image(r.content, caption="Tracking Scatterplot", use_container_width=True)
+            else:
+                st.error(f"Failed to Fetch Plot: {r.status_code}")
+
         else:
             st.info('Please select an option and click the button.')
         
@@ -102,3 +112,4 @@ with st.form("camera-form"):
 
 #place_a_video()
 camera_button()
+

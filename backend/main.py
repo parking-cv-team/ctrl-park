@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Response
 from pydantic import BaseModel
 import os
 from dotenv import load_dotenv
@@ -6,6 +6,10 @@ from db import init_db, SessionLocal, CameraSource, Zone
 from db.models import Detection
 from datetime import datetime, timedelta, timezone
 from sqlalchemy import func,distinct
+
+import pandas as pd
+import matplotlib.pyplot as plt 
+import io 
 
 load_dotenv()
 
@@ -125,3 +129,41 @@ def cameras(camera_id,limit=50):
 
     db.close()
     return items
+
+@app.get("/analytics/trajectory_analysis")
+def trajectory_analysis(camera_id):
+    with SessionLocal() as db:
+        rows_cars = (db.query(Detection.id, Detection.cx, Detection.cy).
+            filter(Detection.camera_id == camera_id). \
+            filter(Detection.class_name == "car")
+        )
+        
+        rows_pedestrians = (db.query(Detection.id, Detection.cx, Detection.cy).
+            filter(Detection.camera_id == camera_id).
+            filter(Detection.class_name == "pedestrian")
+        )
+
+    df_cars = pd.DataFrame(rows_cars)
+    df_pedestrians = pd.DataFrame(rows_pedestrians)
+
+    fig, ax = plt.subplots()
+
+    ax.scatter(
+        df_cars['cx'], df_cars['cy'], color = "red"
+    )
+
+    ax.scatter(
+        df_pedestrians['cx'], df_pedestrians['cy'], color = "blue"
+    )
+
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png")
+    buf.seek(0)
+
+    im_bytes = buf.getvalue()
+
+    buf.close()
+    plt.close(fig)
+
+    return Response(content=im_bytes, media_type="image/png")
+
