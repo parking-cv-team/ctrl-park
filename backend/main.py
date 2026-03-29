@@ -2,8 +2,10 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 import os
 from dotenv import load_dotenv
-from db import init_db, SessionLocal, CameraSource
+from db import init_db, SessionLocal, CameraSource, Zone
 from db.models import Detection
+from datetime import datetime, timedelta, timezone
+from sqlalchemy import func
 
 load_dotenv()
 
@@ -70,6 +72,19 @@ def cameras(limit=50):
         for it in items
     ]
 
+@app.get("/analytics/cameras/recent")
+def recent_analytics(camera_id,limit=50):
+    limit = int(limit)
+    if not limit:
+        raise HTTPException(status_code=400, detail="Limit must be an integer")
+    if limit < 1:
+        raise HTTPException(status_code=400, detail="Limit must be positive")
+
+    db = SessionLocal()
+    one_minute_ago = datetime.now(timezone.utc) - timedelta(minutes=1)
+    items = db.query(func.count(Detection.id)).filter(Detection.timestamp >= one_minute_ago).filter(Detection.camera_id == camera_id).scalar()
+    return items
+
 @app.get("/analytics/zones")
 def cameras(camera_id,limit=50):
     limit = int(limit)
@@ -84,7 +99,7 @@ def cameras(camera_id,limit=50):
     return [
         {
             "id": it.id,
-            "name": it.name,
+            "name": str(it.name),
             "category": it.category,
             "camera_id": it.camera_id,
         }

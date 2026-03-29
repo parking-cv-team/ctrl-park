@@ -17,18 +17,19 @@ def camera_button():
         response = requests.get(f"{API_BASE}/analytics/cameras")
         response.raise_for_status()
         rows = response.json()
-        #st.title("Selection Action App")
-
-        # 1. Create the dropdown (selectbox)
+        
+        # Create the dropdown
         option = st.selectbox(
             '## Choose a camera to see occupancy:',tuple([i["name"] for i in rows])
         )
 
-        # 2. Create the button
+        # Create the button
         if st.button('Confirm Selection'):
-            # 3. Logic to execute when button is clicked
+            # Logic to execute when button is clicked
             st.success(f'You confirmed: {option}')
-            draw_table(list(filter(lambda x: x["name"]==option, rows))[0])
+            camera = list(filter(lambda x: x["name"]==option, rows))[0]
+            number_of_cars(camera)
+            draw_table(camera)
             
         else:
             st.info('Please select an option and click the button.')
@@ -68,6 +69,17 @@ def place_a_video():
         cap.release()
 
 
+def number_of_cars(camera):
+    try:
+        response = requests.get(f"{API_BASE}/analytics/cameras/recent",params={"camera_id":camera["id"]})
+        response.raise_for_status()
+        st.write(f"Number of cars in the last minute seen by {camera["name"]}: {response.text}")
+                
+    except Exception as e:
+        st.error(f"Could not fetch analytics: {e}")
+    pass
+
+
 API_BASE = os.getenv("API_BASE_URL", "http://localhost:8000")
 
 st.title("Ctrl+Park Dashboard")
@@ -97,5 +109,5 @@ with st.form("camera-form"):
             st.error(f"Error: {e}")
 
 
-place_a_video()
+#place_a_video()
 camera_button()
