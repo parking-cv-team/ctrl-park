@@ -21,7 +21,7 @@ def _build_zone_polygons(in_zones: List[Zone]) -> list[tuple[Zone, sv.PolygonZon
     result = []
     for z in in_zones:
         polygon = np.array(z.polygon, dtype=np.int32)
-        result.append((z, sv.PolygonZone(polygon=polygon)))
+        result.append((z, sv.PolygonZone(polygon=polygon)))  # pyright: ignore[reportArgumentType] An implicit cast exists
     return result
 
 
@@ -37,7 +37,7 @@ def _zone_for_each_detection(
         mask = poly_zone.trigger(detections)
         for i, inside in enumerate(mask):
             if inside and det_zone_ids[i] is None:
-                det_zone_ids[i] = zone_db.id
+                det_zone_ids[i] = zone_db.id # pyright: ignore[reportCallIssue, reportArgumentType] An implicit cast exists
     return det_zone_ids
 
 
@@ -82,7 +82,7 @@ def _persist_detections(
 
     for i in range(len(tracked)):
         x1, y1, x2, y2 = tracked.xyxy[i]
-        confidence = float(tracked.confidence[i])
+        confidence = float(tracked.confidence[i]) # pyright: ignore[reportOptionalSubscript] The object does, in fact, exist
         tracker_id = int(tracked.tracker_id[i]) if tracked.tracker_id is not None else None
 
         # filter 1: confidence threshold
