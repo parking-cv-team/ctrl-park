@@ -11,6 +11,9 @@ import pandas as pd
 import matplotlib
 import matplotlib.pyplot as plt 
 import cv2
+import base64
+import numpy as np
+from scipy.ndimage import gaussian_filter
 
 matplotlib.use("Agg")
 
@@ -26,6 +29,10 @@ init_db()
 class CameraInput(BaseModel):
     name: str
     uri: str
+
+class TrajectoryRequest(BaseModel):
+    camera_id: int
+    frame: str = None  # base64-encoded PNG
 
 
 
@@ -134,8 +141,9 @@ def cameras(camera_id,limit=50):
     db.close()
     return items
 
-@app.get("/analytics/trajectory_analysis")
-def trajectory_analysis(camera_id, frame=None):
+@app.post("/analytics/trajectory_analysis")
+def trajectory_analysis(body: TrajectoryRequest):
+    camera_id = body.camera_id
     with SessionLocal() as db:
         rows_cars_parked = (db.query(Detection.id, Detection.tracker_id, Detection.cx, Detection.cy).
             filter(Detection.camera_id == camera_id). \
@@ -148,7 +156,7 @@ def trajectory_analysis(camera_id, frame=None):
             filter(Detection.class_name == "car"). \
             filter(Detection.zone_id == None)
         )
-        
+
         rows_pedestrians = (db.query(Detection.id, Detection.tracker_id, Detection.cx, Detection.cy).
             filter(Detection.camera_id == camera_id).
             filter(Detection.class_name == "pedestrian")
@@ -162,9 +170,13 @@ def trajectory_analysis(camera_id, frame=None):
 
     ax = axes[0]
 
-    if frame is not None:
-        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        ax.imshow(frame_rgb, cmap="gray")
+    if body.frame is not None:
+        img_bytes = base64.b64decode(body.frame)
+        img_array = np.frombuffer(img_bytes, dtype=np.uint8)
+        frame_bgr = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
+        frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
+        ax.invert_yaxis()
+        ax.imshow(frame_rgb)
 
     ax.scatter(
         df_cars_parked['cx'], df_cars_parked['cy'], color = "red", marker="s", alpha=0.3, label="Parked car", s=20
@@ -217,10 +229,23 @@ def trajectory_analysis(camera_id, frame=None):
     # plot 2d histogram
     ax2 = axes[1]
 
-    h = ax2.hist2d(df_cars_parked["cx"], df_cars_parked["cy"],
-                   range=[ax.get_xlim(), ax.get_ylim()],
-                   cmap="plasma")
-    fig.colorbar(h[3], ax=ax2, label="Count")
+    print(ax.get_xlim(), ax.get_ylim())
+
+    h, xe1, ye1= np.histogram2d(df_cars_parked["cx"], df_cars_parked["cy"],
+                   range=[ax.get_xlim(), ax.get_ylim()[::-1]],
+                   bins=25
+                )
+    
+    h_blur = gaussian_filter(h, sigma=2)
+
+    ax2.imshow(
+        h_blur.T,
+        origin="lower",
+        extent=[xe1[0], xe1[-1], ye1[0], ye1[-1]],
+        cmap="cividis",
+        aspect="auto"
+    )
+
     ax2.set_title("Density Heatmap (parked cars only)")
 
     # plot 2d histogram overall
@@ -231,14 +256,24 @@ def trajectory_analysis(camera_id, frame=None):
 
     ax3 = axes[2]
 
-    h_other = ax3.hist2d(all_df["cx"], all_df["cy"],
-                   range=[ax.get_xlim(), ax.get_ylim()],
-                   cmap = "plasma")
-    fig.colorbar(h_other[3], ax=ax3, label="Count")
-    ax3.set_title("Density Heatmap (moving cars + pedestrians)")
+    h, xe1, ye1= np.histogram2d(all_df["cx"], all_df["cy"],
+                   range=[ax.get_xlim(), ax.get_ylim()[::-1]],
+                   bins=25
+                )
+    
+    h_blur = gaussian_filter(h, sigma=2)
 
+    ax3.imshow(
+        h_blur.T,
+        origin="lower",
+        extent=[xe1[0], xe1[-1], ye1[0], ye1[-1]],
+        cmap="cividis",
+        aspect="auto"
+    )
+
+    ax3.set_title("Density Heatmap (moving cars + pedestrians)")
+    
     # invert y axis-es to convert coordinates
-    ax.invert_yaxis()
     ax2.invert_yaxis()
     ax3.invert_yaxis()
 

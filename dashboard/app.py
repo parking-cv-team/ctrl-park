@@ -2,6 +2,7 @@ import streamlit as st
 import requests
 import os
 import cv2
+import base64
 from dotenv import load_dotenv
 
 
@@ -44,7 +45,11 @@ def camera_button():
 def request_tracking_plots(camera_id):
     if st.button("Show tracking map"):
         frame = get_first_frame()
-        r = requests.get(f"{API_BASE}/analytics/trajectory_analysis", params={"camera_id": camera_id, "frame": frame})
+        payload = {"camera_id": camera_id}
+        if frame is not None:
+            _, buf = cv2.imencode(".png", frame)
+            payload["frame"] = base64.b64encode(buf).decode("utf-8")
+        r = requests.post(f"{API_BASE}/analytics/trajectory_analysis", json=payload)
 
         if r.status_code == 200:
             st.image(r.content, caption="Tracking Scatterplot", width="stretch")
@@ -57,10 +62,12 @@ def get_first_frame():
     # if it doesn't, replace with a working logic and uhhhhhhh
     cap = cv2.VideoCapture(RTSP_URL)
     if not cap.isOpened():
-        print("here")
         return None
 
     try:
+        for i in range(30):
+            ret, frame = cap.read()
+            
         while True:
             ret, frame = cap.read()
             if ret:

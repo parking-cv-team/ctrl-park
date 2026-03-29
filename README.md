@@ -43,6 +43,9 @@ To video feed on the dashboard (probably only works on linux for now):
     1. setup the docker:
         docker run --rm -it -v $PWD/rtsp-simple-server.yml:/rtsp-simple-server.yml -p 8554:8554 aler9/rtsp-simple-server:v1.3.0
 
+Or, equivalently ok Windows:
+        docker run --rm -it -v %CD%/rtsp-simple-server.yml:/rtsp-simple-server.yml -p 8554:8554 aler9/rtsp-simple-server:v1.3.0
+
     2. setup ffmpeg that feeds the video (video/testfile.mp4 in this case) to the docker:
         ffmpeg -re -stream_loop -1 -i video/testfile.mp4 -f rtsp -rtsp_transport tcp rtsp://localhost:8554/live.stream
 
