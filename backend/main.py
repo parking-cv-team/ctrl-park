@@ -4,7 +4,8 @@ import os
 from dotenv import load_dotenv
 from db import init_db, SessionLocal, CameraSource, Zone,ZoneOccupancy
 from db.models import Detection
-from sqlalchemy import func,distinct
+from datetime import datetime, timedelta, timezone
+from sqlalchemy import func,distinct,text
 import numpy as np
 
 import pandas as pd
@@ -149,6 +150,7 @@ def cameras(camera_id,limit=50):
 
 @app.post("/analytics/trajectory_analysis")
 def trajectory_analysis(body: TrajectoryRequest):
+    #TODO: treat edge cases, like no parked cars at all/ no pedestrians at all/ no moving cars at all
     camera_id = body.camera_id
     with SessionLocal() as db:
         rows_cars_parked = (db.query(Detection.id, Detection.tracker_id, Detection.cx, Detection.cy).
@@ -172,9 +174,13 @@ def trajectory_analysis(body: TrajectoryRequest):
     df_cars_moving = (pd.DataFrame(rows_cars_moving))
     df_pedestrians = (pd.DataFrame(rows_pedestrians))
 
-    fig, axes = plt.subplots(1, 3, figsize=(25, 7))
+    fig = plt.figure(layout="constrained", figsize=(17, 12))
+    fig.suptitle("Detections Scatterplot and Heatmap(s)")
+    gs = fig.add_gridspec(2, 2)
 
-    ax = axes[0]
+    ax = fig.add_subplot(gs[0, :])
+    ax2 = fig.add_subplot(gs[1, 0])
+    ax3 = fig.add_subplot(gs[1, 1])
 
     if body.frame is not None:
         img_bytes = base64.b64decode(body.frame)
@@ -183,6 +189,8 @@ def trajectory_analysis(body: TrajectoryRequest):
         frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
         ax.invert_yaxis()
         ax.imshow(frame_rgb)
+        ax2.imshow(frame_rgb, alpha=0.5)
+        ax3.imshow(frame_rgb, alpha=0.5)
 
     ax.scatter(
         df_cars_parked['cx'], df_cars_parked['cy'], color = "red", marker="s", alpha=0.3, label="Parked car", s=20
@@ -198,6 +206,11 @@ def trajectory_analysis(body: TrajectoryRequest):
 
     ax.set_xlabel("x position (pixel)")
     ax.set_ylabel("y position (pixel)")
+    ax2.set_xlabel("x position (pixel)")
+    ax2.set_ylabel("y position (pixel)")
+    ax3.set_xlabel("x position (pixel)")
+    ax3.set_ylabel("y position (pixel)")
+
     ax.set_title("Detected Objects Scatterplot and Trajectories")
 
     for track_id, g in df_pedestrians.sort_values("id").groupby("tracker_id"):
@@ -233,7 +246,6 @@ def trajectory_analysis(body: TrajectoryRequest):
     ax.grid()
 
     # plot 2d histogram
-    ax2 = axes[1]
 
     print(ax.get_xlim(), ax.get_ylim())
 
@@ -248,8 +260,9 @@ def trajectory_analysis(body: TrajectoryRequest):
         h_blur.T,
         origin="lower",
         extent=[xe1[0], xe1[-1], ye1[0], ye1[-1]],
-        cmap="cividis",
-        aspect="auto"
+        cmap="magma",
+        aspect="auto",
+        alpha=0.7
     )
 
     ax2.set_title("Density Heatmap (parked cars only)")
@@ -259,8 +272,6 @@ def trajectory_analysis(body: TrajectoryRequest):
         df_cars_moving[["cx", "cy"]],
         df_pedestrians[["cx", "cy"]]
     ], ignore_index=True)
-
-    ax3 = axes[2]
 
     h, xe1, ye1= np.histogram2d(all_df["cx"], all_df["cy"],
                    range=[ax.get_xlim(), ax.get_ylim()[::-1]],
@@ -273,15 +284,20 @@ def trajectory_analysis(body: TrajectoryRequest):
         h_blur.T,
         origin="lower",
         extent=[xe1[0], xe1[-1], ye1[0], ye1[-1]],
-        cmap="cividis",
-        aspect="auto"
+        cmap="magma",
+        aspect="auto",
+        alpha=0.7
     )
 
     ax3.set_title("Density Heatmap (moving cars + pedestrians)")
-    
+
+
     # invert y axis-es to convert coordinates
     ax2.invert_yaxis()
     ax3.invert_yaxis()
+
+
+
 
     # convert to bytes and return API response
 
@@ -296,6 +312,194 @@ def trajectory_analysis(body: TrajectoryRequest):
 
     return Response(content=im_bytes, media_type="image/png")
 
+@app.get("/analytics/metrics_report/kpi")
+def metrics_report_kpi(camera_id, t_start, t_end):
+    with SessionLocal() as db:
+        # 1. total tracked by class
+        total_tracked_by_class_q = (
+            db.query(
+                Detection.class_name.label("class_name"),
+                func.count(distinct(Detection.tracker_id)).label("total_tracked")
+            )
+            .filter(
+                Detection.camera_id == camera_id,
+                Detection.timestamp > t_start,
+                Detection.timestamp < t_end,
+                Detection.tracker_id.isnot(None),
+            )
+            .group_by(Detection.class_name)
+        )
+
+        # 2. average confidence by class
+        avg_confidence_by_class_q = (
+            db.query(
+                Detection.class_name.label("class_name"),
+                func.avg(Detection.confidence).label("avg_confidence")
+            )
+            .filter(
+                Detection.camera_id == camera_id,
+                Detection.timestamp > t_start,
+                Detection.timestamp < t_end,
+            )
+            .group_by(Detection.class_name)
+        )
+
+        # 3. total zones
+        # Assumes Zone has camera_id. If not, this must be changed.
+        total_zones_q = (
+            db.query(
+                func.count(Zone.id).label("total_zones")
+            )
+            .filter(Zone.camera_id == camera_id)
+        )
+
+        # 4. maximum and average occupations
+        # Inner query: number of occupied zones/detections per timestamp
+        occupations_subq = (
+            db.query(
+                Detection.timestamp.label("ts"),
+                func.count(Detection.id).label("occupation_count")
+            )
+            .filter(
+                Detection.camera_id == camera_id,
+                Detection.timestamp > t_start,
+                Detection.timestamp < t_end,
+                Detection.zone_id.isnot(None),
+            )
+            .group_by(Detection.timestamp)
+            .subquery()
+        )
+
+        max_occupations_q = (
+            db.query(
+                func.max(occupations_subq.c.occupation_count).label("max_occupations")
+            )
+        )
+
+        avg_occupations_q = (
+            db.query(
+                func.avg(occupations_subq.c.occupation_count).label("avg_occupations")
+            )
+        )
+
+        # 5. average tracking time by class
+        track_subquery = (
+            db.query(
+                Detection.tracker_id.label("t_id"),
+                Detection.class_name.label("class_name"),
+                func.timestampdiff(
+                    text("SECOND"),
+                    func.min(Detection.timestamp),
+                    func.max(Detection.timestamp)
+                ).label("tdiff")
+            )
+            .filter(
+                Detection.camera_id == camera_id,
+                Detection.timestamp > t_start,
+                Detection.timestamp < t_end,
+                Detection.tracker_id.isnot(None),
+                Detection.timestamp.isnot(None),
+            )
+            .group_by(
+                Detection.tracker_id,
+                Detection.class_name
+            )
+            .subquery()
+        )
+
+        avg_track_time_q = (
+            db.query(
+                track_subquery.c.class_name,
+                func.avg(track_subquery.c.tdiff).label("avg_track_time_seconds")
+            )
+            .group_by(track_subquery.c.class_name)
+        )
+
+        # 6. average confidence by class (this was duplicated in your code)
+        avg_confidence_q = (
+            db.query(
+                Detection.class_name.label("class_name"),
+                func.avg(Detection.confidence).label("avg_confidence")
+            )
+            .filter(
+                Detection.camera_id == camera_id,
+                Detection.timestamp > t_start,
+                Detection.timestamp < t_end
+            )
+            .group_by(Detection.class_name)
+        )
+
+        to_ret = {
+            "total_tracked_by_class": pd.DataFrame(total_tracked_by_class_q).to_dict(orient="records"),
+            "avg_confidence_by_class": pd.DataFrame(avg_confidence_by_class_q).to_dict(orient="records"),
+            "total_zones": pd.DataFrame(total_zones_q).to_dict(orient="records"),
+            "max_occupations": pd.DataFrame(max_occupations_q).to_dict(orient="records"),
+            "avg_occupations": pd.DataFrame(avg_occupations_q).to_dict(orient="records"),
+            "avg_track_time": pd.DataFrame(avg_track_time_q).to_dict(orient="records"),
+            "avg_confidence": pd.DataFrame(avg_confidence_q).to_dict(orient="records"),
+        }
+
+    return to_ret
+
+
+@app.get("/analytics/metrics_report/timeseries")
+def metrics_report_timeseries(camera_id, t_start, t_end):
+    with SessionLocal() as db:
+        confidence_ts = (
+            db.query(
+                Detection.timestamp.label("t"),
+                Detection.class_name.label("class_name"),
+                func.avg(Detection.confidence).label("avg_confidence"),
+            )
+            .filter(
+                Detection.camera_id == camera_id,
+                Detection.timestamp > t_start,
+                Detection.timestamp < t_end,
+            )
+            .group_by(Detection.timestamp, Detection.class_name)
+            .all()
+        )
+
+        tracked_objects_ts = (
+            db.query(
+                Detection.timestamp.label("t"),
+                Detection.class_name.label("class_name"),
+                func.count(func.distinct(Detection.tracker_id)).label("num_tracked")
+            )
+            .filter(
+                Detection.camera_id == camera_id,
+                Detection.timestamp > t_start,
+                Detection.timestamp < t_end,
+                Detection.tracker_id.isnot(None),
+                Detection.class_name.in_(["car", "pedestrian"])
+            )
+            .group_by(Detection.timestamp, Detection.class_name)
+            .all()
+        )
+
+        parked_vehicles_ts = (
+            db.query(
+                Detection.timestamp.label("t"),
+                func.count(func.distinct(Detection.tracker_id)).label("num_parked_vehicles")
+            )
+            .filter(
+                Detection.camera_id == camera_id,
+                Detection.timestamp > t_start,
+                Detection.timestamp < t_end,
+                Detection.tracker_id.isnot(None),
+                Detection.zone_id.isnot(None),
+                Detection.class_name == "car"
+            )
+            .group_by(Detection.timestamp)
+            .all()
+        )
+
+    return {
+            "ts_confidence": pd.DataFrame(confidence_ts).to_dict(orient="records"),
+            "ts_objects": pd.DataFrame(tracked_objects_ts).to_dict(orient="records"),
+            "ts_parked": pd.DataFrame(parked_vehicles_ts).to_dict(orient="records"),
+        }
+     
 @app.get("/analytics/zones/poly")
 def cameras(camera_id,limit=50):
     limit = int(limit)

@@ -12,3 +12,4 @@ cryptography
 opencv-python
 ultralytics
 rfdetr
+seaborn
