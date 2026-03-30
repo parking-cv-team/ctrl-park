@@ -13,7 +13,7 @@ from pathlib import Path
 load_dotenv()
 
 
-def get_parking_zones(uri, frame):
+def get_parking_zones(uri):
     try:
         zone_config: CameraSource = _load_zone_config_from_db(source=uri)
     except FileNotFoundError:

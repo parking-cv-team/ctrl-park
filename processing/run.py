@@ -33,15 +33,8 @@ def main():
     if not cap.isOpened():
         raise Exception(f"Could not open stream: {camera_uri}")
 
-    # RTSP streams often produce corrupted frames on initial connect; skip them.
-    ret, first_frame = False, None
-    for _ in range(30):
-        ret, frame = cap.read()
-
-    if ret:
-        first_frame = frame
-    cap.release()
-    zones = get_parking_zones(camera_uri, first_frame) if ret else []
+    
+    zones = get_parking_zones(camera_uri)
     if zones is None:
         zones = []
 
