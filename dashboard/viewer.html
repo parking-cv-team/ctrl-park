@@ -1,0 +1,319 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>3D Viewer</title>
+        <style>
+            body {
+                margin: 0;
+                overflow: hidden;
+            }
+            canvas {
+                display: block;
+                width: 100%;
+                height: 100vh;
+            }
+        </style>
+    </head>
+    <body>
+        <canvas id="canvas"></canvas>
+
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+        <script>
+            // Three.js scene setup
+            const scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x87ceeb);
+
+            const camera = new THREE.PerspectiveCamera(
+                75,
+                window.innerWidth / window.innerHeight,
+                0.1,
+                1000,
+            );
+            camera.position.set(0, 20, 50);
+
+            const renderer = new THREE.WebGLRenderer({
+                canvas: document.getElementById("canvas"),
+            });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.shadowMap.enabled = true;
+            renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
+            // First-person control state
+            const player = new THREE.Object3D();
+            const pitchObject = new THREE.Object3D();
+            const yawObject = new THREE.Object3D();
+            yawObject.add(pitchObject);
+            pitchObject.add(camera);
+            scene.add(yawObject);
+
+            yawObject.position.set(0, 2, 30);
+            camera.position.set(0, 0, 0);
+
+            const movement = {
+                forward: false,
+                backward: false,
+                left: false,
+                right: false,
+                up: false,
+                down: false,
+            };
+
+            let moveSpeed = 0.3;
+            let mouseDown = false;
+
+            window.addEventListener("keydown", (event) => {
+                switch (event.key.toLowerCase()) {
+                    case "w":
+                        movement.forward = true;
+                        break;
+                    case "s":
+                        movement.backward = true;
+                        break;
+                    case "a":
+                        movement.left = true;
+                        break;
+                    case "d":
+                        movement.right = true;
+                        break;
+                    case " ":
+                        movement.up = true;
+                        break;
+                    case "c":
+                        movement.down = true;
+                        break;
+                }
+            });
+
+            window.addEventListener("keyup", (event) => {
+                switch (event.key.toLowerCase()) {
+                    case "w":
+                        movement.forward = false;
+                        break;
+                    case "s":
+                        movement.backward = false;
+                        break;
+                    case "a":
+                        movement.left = false;
+                        break;
+                    case "d":
+                        movement.right = false;
+                        break;
+                    case " ":
+                        movement.up = false;
+                        break;
+                    case "c":
+                        movement.down = false;
+                        break;
+                }
+            });
+
+            //TODO: stop moving on lost frame focus
+
+            window.addEventListener("mousedown", () => {
+                mouseDown = true;
+                document.body.style.cursor = "none";
+            });
+
+            window.addEventListener("mouseup", () => {
+                mouseDown = false;
+                document.body.style.cursor = "default";
+            });
+
+            window.addEventListener("mousemove", (event) => {
+                if (!mouseDown) return;
+                const sensitivity = 0.002;
+                yawObject.rotation.y -= event.movementX * sensitivity;
+                pitchObject.rotation.x -= event.movementY * sensitivity;
+                pitchObject.rotation.x = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, pitchObject.rotation.x));
+            });
+
+            function updateFirstPerson(delta) {
+                const direction = new THREE.Vector3();
+                const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(yawObject.quaternion);
+                const right = new THREE.Vector3(1, 0, 0).applyQuaternion(yawObject.quaternion);
+
+                if (movement.forward) direction.add(forward);
+                if (movement.backward) direction.sub(forward);
+                if (movement.left) direction.sub(right);
+                if (movement.right) direction.add(right);
+                if (movement.up) yawObject.position.y += moveSpeed * delta;
+                if (movement.down) yawObject.position.y -= moveSpeed * delta;
+
+                direction.normalize().multiplyScalar(moveSpeed * delta);
+                yawObject.position.add(direction);
+            }
+
+            // Lighting
+            const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+            scene.add(ambientLight);
+
+            const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+            directionalLight.position.set(50, 50, 50);
+            directionalLight.castShadow = true;
+            directionalLight.shadow.mapSize.width = 2048;
+            directionalLight.shadow.mapSize.height = 2048;
+            directionalLight.shadow.camera.left = -100;
+            directionalLight.shadow.camera.right = 100;
+            directionalLight.shadow.camera.top = 100;
+            directionalLight.shadow.camera.bottom = -100;
+            directionalLight.shadow.camera.far = 200;
+            scene.add(directionalLight);
+
+            // Ground plane
+            const groundGeometry = new THREE.PlaneGeometry(200, 200);
+            const groundMaterial = new THREE.MeshLambertMaterial({
+                color: 0x90ee90,
+            });
+            const ground = new THREE.Mesh(groundGeometry, groundMaterial);
+            ground.rotation.x = -Math.PI / 2;
+            ground.receiveShadow = true;
+            scene.add(ground);
+
+            //Auto generated demo scene from here, just to test the viewer
+
+            // Example zones data (from example_zones.py)
+            const zonesData = [
+                {
+                    id: 1,
+                    name: "Zone A - Upper Level",
+                    points: [
+                        [-20, -30],
+                        [20, -30],
+                        [20, 0],
+                        [-20, 0],
+                    ],
+                    occupancy: 5,
+                },
+                {
+                    id: 2,
+                    name: "Zone B - Lower Level",
+                    points: [
+                        [-20, 5],
+                        [20, 5],
+                        [20, 35],
+                        [-20, 35],
+                    ],
+                    occupancy: 8,
+                },
+            ];
+            const zoneColors = [
+                0xff6b6b, 0x4ecdc4, 0x45b7d1, 0xffa07a, 0x98d8c8,
+            ];
+            // Function to create a zone with both plane (floor) and mesh (walls)
+            function createZone(zoneData, index) {
+                const points = zoneData.points;
+                if (points.length < 3) return;
+
+                const color = zoneColors[index % zoneColors.length];
+                const height = 3; // Height of the walls
+
+                // Create shape from 2D polygon for the floor
+                const shape = new THREE.Shape();
+                shape.moveTo(points[0][0], points[0][1]);
+                for (let i = 1; i < points.length; i++) {
+                    shape.lineTo(points[i][0], points[i][1]);
+                }
+                shape.lineTo(points[0][0], points[0][1]); // Close shape
+
+                // Create floor mesh
+                const floorGeometry = new THREE.ShapeGeometry(shape);
+                const floorMaterial = new THREE.MeshLambertMaterial({
+                    color: color,
+                    transparent: true,
+                    opacity: 0.8,
+                });
+                const floor = new THREE.Mesh(floorGeometry, floorMaterial);
+                floor.rotation.x = -Math.PI / 2; // Rotate to lie flat on ground
+                floor.receiveShadow = true;
+                scene.add(floor);
+
+                // Create walls (extruded mesh)
+                const extrudeSettings = {
+                    depth: height,
+                    bevelEnabled: false,
+                };
+                const wallGeometry = new THREE.ExtrudeGeometry(
+                    shape,
+                    extrudeSettings,
+                );
+                const wallMaterial = new THREE.MeshLambertMaterial({
+                    color: color,
+                    transparent: true,
+                    opacity: 0.6,
+                });
+                const walls = new THREE.Mesh(wallGeometry, wallMaterial);
+                walls.position.y = height / 2; // Center vertically
+                walls.castShadow = true;
+                walls.receiveShadow = true;
+                scene.add(walls);
+
+                // Add zone label
+                addZoneLabel(points, zoneData.name, color);
+            }
+
+            // Function to add zone labels
+            function addZoneLabel(points, name, color) {
+                // Calculate centroid
+                let cx = 0,
+                    cz = 0;
+                points.forEach((p) => {
+                    cx += p[0];
+                    cz += p[1];
+                });
+                cx /= points.length;
+                cz /= points.length;
+
+                // Create canvas for text
+                const canvas = document.createElement("canvas");
+                canvas.width = 256;
+                canvas.height = 128;
+                const ctx = canvas.getContext("2d");
+
+                ctx.fillStyle = "rgba(0, 0, 0, 0.7)";
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                ctx.fillStyle = "#FFFFFF";
+                ctx.font = "bold 24px Arial";
+                ctx.textAlign = "center";
+                ctx.fillText(name, canvas.width / 2, 50);
+
+                const texture = new THREE.CanvasTexture(canvas);
+                const spriteMaterial = new THREE.SpriteMaterial({
+                    map: texture,
+                });
+                const sprite = new THREE.Sprite(spriteMaterial);
+                sprite.position.set(cx, 6, cz); // Above the walls
+                sprite.scale.set(8, 4, 1);
+                scene.add(sprite);
+            }
+
+            // Create all zones
+            zonesData.forEach((zone, index) => {
+                createZone(zone, index);
+            });
+
+            //End of auto generated demo scene
+
+            // Animation loop
+            let prevTime = performance.now();
+            function animate() {
+                requestAnimationFrame(animate);
+                const time = performance.now();
+                const delta = (time - prevTime) / 16.6667; //Estimate for 60fps, probably needs paratetrizing or otherwise fixing for different refresh rates, no way ti runs flat for everyone
+                prevTime = time;
+
+                updateFirstPerson(delta);
+                renderer.render(scene, camera);
+            }
+            animate();
+
+            // Handle window resize, because we all love flip phone users and people with diagonal monitors or whatever
+            window.addEventListener("resize", () => {
+                camera.aspect = window.innerWidth / window.innerHeight;
+                camera.updateProjectionMatrix();
+                renderer.setSize(window.innerWidth, window.innerHeight);
+            });
+        </script>
+    </body>
+</html>

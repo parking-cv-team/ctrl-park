@@ -1,4 +1,5 @@
 import streamlit as st
+import streamlit.components.v1 as components
 import requests
 import os
 import cv2
@@ -23,7 +24,7 @@ from db.models import Zone
 #           camera_video()
 #           trajectory+heatmap()
 #           occupancy_table()
-
+#           3D viewer
 
 load_dotenv()
 
@@ -138,7 +139,7 @@ def veicoli_fuori(camera):
             seen.add(x["tracker_id"])
         
         for x in unique:
-            st.write(f"Found {x["class"]} outside zones at x:{x["cx"]} y:{x["cy"]} with tracking id: {x["tracker_id"]} at timestamp: {x["time"]}")
+            st.write(f"Found {x['class']} outside zones at x:{x['cx']} y:{x['cy']} with tracking id: {x['tracker_id']} at timestamp: {x['time']}")
 
 
     except Exception as e:
@@ -387,6 +388,10 @@ def body():
     camera_form()
     camera_button()
     camera_selected()
+    
+    # Load and display the 3D viewer
+    html_code = open("dashboard/viewer.html", "r").read()
+    components.html(html_code, height=700)
 
 
 body()
