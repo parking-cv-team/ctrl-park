@@ -1,14 +1,15 @@
 import streamlit as st
+import streamlit.components.v1 as components
 import requests
 import os
 import cv2
 import base64
 from dotenv import load_dotenv
-import pandas as pd 
+import pandas as pd
 import seaborn as sns
 import json
 from datetime import datetime, timedelta
-import matplotlib.pyplot as plt 
+import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
 import numpy as np
 import time
@@ -25,7 +26,7 @@ from video_player import run_opencv_window as run_rstp_feed
 #           camera_video()
 #           trajectory+heatmap()
 #           occupancy_table()
-
+#           3D viewer
 
 load_dotenv()
 
@@ -33,18 +34,28 @@ RTSP_URL = "rtsp://localhost:8554/live.stream"
 API_BASE = os.getenv("API_BASE_URL", "http://localhost:8000")
 
 def camera_button():
+
+    # Initialize session state first (before any API calls)
+    if "confirmed_camera" not in st.session_state:
+        st.session_state.confirmed_camera = None
+    if "show_zones" not in st.session_state:
+        st.session_state.show_zones = False
+    if "show_tracking_map" not in st.session_state:
+        st.session_state.show_tracking_map = False
+
     try:
         response = requests.get(f"{API_BASE}/analytics/cameras")
         response.raise_for_status()
         rows = response.json()
-
 
         option = st.selectbox(
             "## Choose a camera to see related data:", tuple([i["name"] for i in rows])
         )
 
         if st.button("Confirm Selection"):
-            st.session_state.confirmed_camera = list(filter(lambda x: x["name"] == option, rows))[0]
+            st.session_state.confirmed_camera = list(
+                filter(lambda x: x["name"] == option, rows)
+            )[0]
             st.session_state.show_zones = False
             st.session_state.show_tracking_map = False
             st.session_state.show_kpis_live = False
@@ -56,12 +67,11 @@ def camera_selected():
     camera = st.session_state.confirmed_camera
 
     if st.session_state.confirmed_camera is not None:
-        
+
         st.success(f"You confirmed: {st.session_state.confirmed_camera}")
 
         number_of_cars(camera)
 
-        
         cap, placeholder, zones = place_a_video(camera)
 
         if play_vid := st.button("Play Video (with zones)"):
@@ -83,7 +93,7 @@ def camera_selected():
         if st.session_state.show_tracking_map:
             st.markdown("## Tracking Plots and Heatmaps")
             request_tracking_plots(camera["id"])
-        
+
         # tabella occupazioni
         draw_table(camera)
 
@@ -96,7 +106,7 @@ def camera_selected():
         with cols[0]:
             # setto il tempo iniziale a 24 ore prima
             default_dt = datetime.now() - timedelta(days=1)
-            ti = st.datetime_input("Time Start",value=default_dt)
+            ti = st.datetime_input("Time Start", value=default_dt)
         with cols[1]:
             tf = st.datetime_input("Time End")
 
@@ -181,7 +191,8 @@ def request_kpis_live(camera_id):
 def veicoli_fuori(camera):
     try:
         response = requests.get(
-            f"{API_BASE}/analytics/cameras/recent/outside_zones", params={"camera_id": camera["id"]}
+            f"{API_BASE}/analytics/cameras/recent/outside_zones",
+            params={"camera_id": camera["id"]},
         )
         response.raise_for_status()
         data = response.json()
@@ -189,20 +200,22 @@ def veicoli_fuori(camera):
         unique = []
 
         for x in data:
-            if x["event_type"]=="departure":
+            if x["event_type"] == "departure":
                 seen.add(x)
             if x["tracker_id"] in seen:
                 continue
             unique.append(x)
             seen.add(x["tracker_id"])
-        
-        for x in unique:
-            st.write(f"Found {x["class"]} outside zones at x:{x["cx"]} y:{x["cy"]} with tracking id: {x["tracker_id"]} at timestamp: {x["time"]}")
 
+        for x in unique:
+            st.write(
+                f"Found {x['class']} outside zones at x:{x['cx']} y:{x['cy']} with tracking id: {x['tracker_id']} at timestamp: {x['time']}"
+            )
 
     except Exception as e:
         st.error(f"Could not get cars outside parking zones: {e}")
     pass
+
 
 # logic to make API request and display the plot
 def request_tracking_plots(camera_id):
@@ -244,14 +257,16 @@ def get_first_frame():
     else:
         return None
 
+
 # logic to make API request to get main metrics
 def request_report(camera_id, t_i, t_f):
     if st.button("Get Metrics Report"):
         # step 1: KPIs
-        r = requests.get(f"{API_BASE}/analytics/metrics_report/kpi", params={'camera_id': camera_id,
-                                                                         't_start': t_i,
-                                                                         't_end': t_f})
-        
+        r = requests.get(
+            f"{API_BASE}/analytics/metrics_report/kpi",
+            params={"camera_id": camera_id, "t_start": t_i, "t_end": t_f},
+        )
+
         if r.status_code == 200:
             r_s = r.content.decode()
             r_j = json.loads(r_s)
@@ -266,25 +281,27 @@ def request_report(camera_id, t_i, t_f):
             st.dataframe(pd.DataFrame(r_j['n_tracked_det']))
 
         else:
-            st.error(f"Could not fetch summary... {r.status_code}")            
+            st.error(f"Could not fetch summary... {r.status_code}")
+
 
 
 def request_timeseries(camera_id, t_i, t_f):
     # TODO: see if i can map the timestamps better, integers make no sense...
-    
+
     if st.button("Get Timeseries Report"):
         # step 1: KPIs
-        r = requests.get(f"{API_BASE}/analytics/metrics_report/timeseries", params={'camera_id': camera_id,
-                                                                         't_start': t_i,
-                                                                         't_end': t_f})
-        
+        r = requests.get(
+            f"{API_BASE}/analytics/metrics_report/timeseries",
+            params={"camera_id": camera_id, "t_start": t_i, "t_end": t_f},
+        )
+
         if r.status_code == 200:
             r_s = r.content.decode()
             r_j = json.loads(r_s)
 
-            ts_1 = (pd.DataFrame(r_j['ts_confidence']))
-            ts_2 = (pd.DataFrame(r_j['ts_objects']))
-            ts_3 = (pd.DataFrame(r_j['ts_parked']))
+            ts_1 = pd.DataFrame(r_j["ts_confidence"])
+            ts_2 = pd.DataFrame(r_j["ts_objects"])
+            ts_3 = pd.DataFrame(r_j["ts_parked"])
 
             fig, axes = plt.subplots(3, 1, figsize=(10, 7))
 
@@ -294,9 +311,29 @@ def request_timeseries(camera_id, t_i, t_f):
             axes[1].set_title("Number of tracked objects")
             axes[2].set_title("Number of parked vehicles")
 
-            sns.lineplot(data=ts_1.reset_index(), ax=axes[0], x=ts_1.index, y="avg_confidence", hue="class_name", palette="Set1")
-            sns.lineplot(data=ts_2.reset_index(), ax=axes[1], x=ts_2.index, y="num_tracked", hue="class_name", palette="Set1")
-            sns.lineplot(data=ts_3.reset_index(), ax=axes[2], x=ts_3.index, y="num_parked_vehicles", palette="Set1")
+            sns.lineplot(
+                data=ts_1.reset_index(),
+                ax=axes[0],
+                x=ts_1.index,
+                y="avg_confidence",
+                hue="class_name",
+                palette="Set1",
+            )
+            sns.lineplot(
+                data=ts_2.reset_index(),
+                ax=axes[1],
+                x=ts_2.index,
+                y="num_tracked",
+                hue="class_name",
+                palette="Set1",
+            )
+            sns.lineplot(
+                data=ts_3.reset_index(),
+                ax=axes[2],
+                x=ts_3.index,
+                y="num_parked_vehicles",
+                palette="Set1",
+            )
 
             axes[1].yaxis.set_major_locator(ticker.MaxNLocator(integer=True))
             axes[2].yaxis.set_major_locator(ticker.MaxNLocator(integer=True))
@@ -310,7 +347,7 @@ def request_timeseries(camera_id, t_i, t_f):
             st.pyplot(fig)
 
         else:
-            st.error(f"Could not fetch summary... {r.status_code}")            
+            st.error(f"Could not fetch summary... {r.status_code}")
 
 
 def get_zones_to_draw(camera):
@@ -365,13 +402,12 @@ def number_of_cars(camera):
         unique = []
 
         for x in data:
-            if x["event_type"]=="departure":
+            if x["event_type"] == "departure":
                 seen.add(x)
             if x["tracker_id"] in seen:
                 continue
             unique.append(x)
             seen.add(x["tracker_id"])
-        
 
         st.write(
             f"#### Number of parked cars seen by {camera['name']}: {len(unique)}"
@@ -397,6 +433,47 @@ def camera_form():
                 st.error(f"Error: {e}")
 
 
+def display_3d_viewer(zones):
+    """Load and display the 3D viewer with zone data from database."""
+    st.text("## 3D Parking Lot Viewer")
+
+    # Convert zones to format expected by viewer (polygon -> points)
+    zones_data = []
+    for zone in zones:
+        zones_data.append(
+            {
+                "id": zone.get("id", -1),
+                "points": zone.get("polygon_global_metric", []),
+            }
+        )
+
+    # Load HTML template
+    html_code = open("dashboard/viewer.html", "r").read()
+
+    # Inject zones data and API base URL into HTML as JavaScript variables
+    zones_json = json.dumps(zones_data)
+    inject_script = f"""
+    <script>
+    window.zonesDataFromPython = {zones_json};
+    window.API_BASE = "{API_BASE}";
+    </script>
+    """
+    html_code = html_code.replace("<body>", inject_script + "<body>")
+
+    components.html(html_code, height=700)
+
+
+def get_mapped_zones():
+    r = requests.get(f"{API_BASE}/mapped_zones/poly")
+
+    if r.status_code == 200:
+        zones = r.json()
+        return zones
+    else:
+        st.error(f"Could not fetch mapped zones: {r.status_code}")
+        return None
+
+
 def body():
     st.title("Ctrl+Park Dashboard")
     if "confirmed_camera" not in st.session_state:
@@ -408,6 +485,9 @@ def body():
     camera_form()
     camera_button()
     camera_selected()
+    mapped_zones = get_mapped_zones()
+    if mapped_zones:
+        display_3d_viewer(mapped_zones)
 
 
 body()
