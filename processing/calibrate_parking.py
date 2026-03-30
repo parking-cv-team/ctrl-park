@@ -83,6 +83,9 @@ def extract_frame(uri: str, frame_idx: int) -> np.ndarray | None:
         print(f"[ERROR] Cannot open: {uri}", file=sys.stderr)
         return None
     cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
+        # RTSP streams often produce corrupted frames on initial connect; skip them.
+    for _ in range(30):
+        ok,frame = cap.read()
     ok, frame = cap.read()
     cap.release()
     return frame if ok else None
