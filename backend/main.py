@@ -622,8 +622,8 @@ def get_mapped_zones_status(single_camera: bool = False):
     if not single_camera:
         all_mapped_zones = db.query(MappedZone).all()
     else:
-        all_mapped_zones: list[MappedZone] = [
-            (MappedZone)(
+        all_mapped_zones = [
+            (
                 {
                     "id": zone.id,
                     "polygon_global_metric": zone.polygon_metric,
@@ -638,17 +638,17 @@ def get_mapped_zones_status(single_camera: bool = False):
         # Find all camera-specific zones that reference this mapped zone
         if not single_camera:
             camera_zones = (
-            db.query(Zone.id).filter(Zone.mapped_zone_id == mapped_zone.id).all()
+            db.query(Zone.id).filter(Zone.mapped_zone_id == mapped_zone['id']).all()
         )
             zone_ids = [z[0] for z in camera_zones]
         else:
-            zone_ids = [mapped_zone.id]  # In single camera mode, the mapped zone ID is the same as the zone ID
+            zone_ids = [mapped_zone['id']]  # In single camera mode, the mapped zone ID is the same as the zone ID
 
         if not zone_ids:
             # No zones tied to this mapped zone, so we consider it free because it was never marked occupied
             result.append(
                 {
-                    "mapped_zone_id": mapped_zone.id,
+                    "mapped_zone_id": mapped_zone['id'],
                     "last_occupancy_time": None,
                     "is_occupied": False,
                 }
@@ -667,7 +667,7 @@ def get_mapped_zones_status(single_camera: bool = False):
         if latest_occupancy is None:
             result.append(
                 {
-                    "mapped_zone_id": mapped_zone.id,
+                    "mapped_zone_id": mapped_zone['id'],
                     "last_occupancy_time": None,
                     "is_occupied": False,
                 }
@@ -678,7 +678,7 @@ def get_mapped_zones_status(single_camera: bool = False):
 
             result.append(
                 {
-                    "mapped_zone_id": mapped_zone.id,
+                    "mapped_zone_id": mapped_zone['id'],
                     "last_occupancy_time": timestamp.isoformat() if timestamp else None,
                     "is_occupied": is_occupied,
                 }
