@@ -1,9 +1,13 @@
+from unittest import result
+
 from fastapi import FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import os
 from dotenv import load_dotenv
 from db import init_db, SessionLocal, CameraSource, Zone, ZoneOccupancy, MappedZone
+import db
+import db
 from db.models import Detection
 from datetime import datetime, timedelta, timezone
 from sqlalchemy import func, distinct, text
@@ -613,19 +617,32 @@ def mapped_zones(single_camera: bool = False):
 
 
 @app.get("/mapped_zones/status")
-def get_mapped_zones_status():
+def get_mapped_zones_status(single_camera: bool = False):
     db = SessionLocal()
-
-    all_mapped_zones = db.query(MappedZone).all()
+    if not single_camera:
+        all_mapped_zones = db.query(MappedZone).all()
+    else:
+        all_mapped_zones: list[MappedZone] = [
+            (MappedZone)(
+                {
+                    "id": zone.id,
+                    "polygon_global_metric": zone.polygon_metric,
+                }
+            )
+            for zone in db.query(Zone).all()
+        ]
+    db.close()
 
     result = []
-
     for mapped_zone in all_mapped_zones:
         # Find all camera-specific zones that reference this mapped zone
-        camera_zones = (
+        if not single_camera:
+            camera_zones = (
             db.query(Zone.id).filter(Zone.mapped_zone_id == mapped_zone.id).all()
         )
-        zone_ids = [z[0] for z in camera_zones]
+            zone_ids = [z[0] for z in camera_zones]
+        else:
+            zone_ids = [mapped_zone.id]  # In single camera mode, the mapped zone ID is the same as the zone ID
 
         if not zone_ids:
             # No zones tied to this mapped zone, so we consider it free because it was never marked occupied

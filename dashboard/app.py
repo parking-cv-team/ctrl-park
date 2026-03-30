@@ -440,7 +440,7 @@ def camera_form():
                 st.error(f"Error: {e}")
 
 
-def display_3d_viewer(zones):
+def display_3d_viewer(zones, single_camera):
     """Load and display the 3D viewer with zone data from database."""
     st.text("## 3D Parking Lot Viewer")
 
@@ -464,6 +464,7 @@ def display_3d_viewer(zones):
     <script>
     window.zonesDataFromPython = {zones_json};
     window.API_BASE = "{API_BASE}";
+    window.SINGLE_CAMERA_MODE = {single_camera};
     </script>
     """
     html_code = html_code.replace("<body>", inject_script + "<body>")
@@ -497,11 +498,13 @@ def body():
     camera_button()
     camera_selected()
     mapped_zones = get_mapped_zones()
+    singlecamera = False
     if not mapped_zones:
         # st.warning("No mapped zones found. Attempting single camera mode")
         mapped_zones = get_mapped_zones(True)
+        singlecamera = True
     if mapped_zones:
-        display_3d_viewer(mapped_zones)
+        display_3d_viewer(mapped_zones, single_camera=singlecamera)
 
 
 body()
