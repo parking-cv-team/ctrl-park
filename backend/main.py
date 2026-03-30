@@ -327,230 +327,215 @@ def trajectory_analysis(body: TrajectoryRequest):
 
 @app.get("/analytics/metrics_report/kpi")
 def metrics_report_kpi(camera_id, t_start, t_end):
-    with SessionLocal() as db:
-        # 1. total tracked by class
-        total_tracked_by_class_q = (
-            db.query(
-                Detection.class_name.label("class_name"),
-                func.count(distinct(Detection.tracker_id)).label("total_tracked")
-            )
-            .filter(
-                Detection.camera_id == camera_id,
-                Detection.timestamp > t_start,
-                Detection.timestamp < t_end,
-                Detection.tracker_id.isnot(None),
-            )
-            .group_by(Detection.class_name)
+    db= SessionLocal()
+    # 1. total tracked by class
+    total_tracked_by_class_q = (
+        db.query(
+            Detection.class_name.label("class_name"),
+            func.count(distinct(Detection.tracker_id)).label("total_tracked")
         )
-
-        # 2. average confidence by class
-        avg_confidence_by_class_q = (
-            db.query(
-                Detection.class_name.label("class_name"),
-                func.avg(Detection.confidence).label("avg_confidence")
-            )
-            .filter(
-                Detection.camera_id == camera_id,
-                Detection.timestamp > t_start,
-                Detection.timestamp < t_end,
-            )
-            .group_by(Detection.class_name)
+        .filter(
+            Detection.camera_id == camera_id,
+            Detection.timestamp > t_start,
+            Detection.timestamp < t_end,
+            Detection.tracker_id.isnot(None),
         )
+        .group_by(Detection.class_name)
+    )
 
-        # 3. total zones
-        # Assumes Zone has camera_id. If not, this must be changed.
-        total_zones_q = (
-            db.query(
-                func.count(Zone.id).label("total_zones")
-            )
-            .filter(Zone.camera_id == camera_id)
+    # 2. average confidence by class
+    avg_confidence_by_class_q = (
+        db.query(
+            Detection.class_name.label("class_name"),
+            func.avg(Detection.confidence).label("avg_confidence")
         )
-
-        # 4. maximum and average occupations
-        # Inner query: number of occupied zones/detections per timestamp
-        occupations_subq = (
-            db.query(
-                Detection.timestamp.label("ts"),
-                func.count(Detection.id).label("occupation_count")
-            )
-            .filter(
-                Detection.camera_id == camera_id,
-                Detection.timestamp > t_start,
-                Detection.timestamp < t_end,
-                Detection.zone_id.isnot(None),
-            )
-            .group_by(Detection.timestamp)
-            .subquery()
+        .filter(
+            Detection.camera_id == camera_id,
+            Detection.timestamp > t_start,
+            Detection.timestamp < t_end,
         )
+        .group_by(Detection.class_name)
+    )
 
-        max_occupations_q = (
-            db.query(
-                func.max(occupations_subq.c.occupation_count).label("max_occupations")
-            )
+    # 3. total zones
+    # Assumes Zone has camera_id. If not, this must be changed.
+    total_zones_q = (
+        db.query(
+            func.count(Zone.id).label("total_zones")
         )
+        .filter(Zone.camera_id == camera_id)
+    )
 
-        avg_occupations_q = (
-            db.query(
-                func.avg(occupations_subq.c.occupation_count).label("avg_occupations")
-            )
+    # 4. maximum and average occupations
+    # Inner query: number of occupied zones/detections per timestamp
+    occupations_subq = (
+        db.query(
+            Detection.timestamp.label("ts"),
+            func.count(Detection.id).label("occupation_count")
         )
-
-        # 5. average tracking time by class
-        track_subquery = (
-            db.query(
-                Detection.tracker_id.label("t_id"),
-                Detection.class_name.label("class_name"),
-                func.timestampdiff(
-                    text("SECOND"),
-                    func.min(Detection.timestamp),
-                    func.max(Detection.timestamp)
-                ).label("tdiff")
-            )
-            .filter(
-                Detection.camera_id == camera_id,
-                Detection.timestamp > t_start,
-                Detection.timestamp < t_end,
-                Detection.tracker_id.isnot(None),
-                Detection.timestamp.isnot(None),
-            )
-            .group_by(
-                Detection.tracker_id,
-                Detection.class_name
-            )
-            .subquery()
+        .filter(
+            Detection.camera_id == camera_id,
+            Detection.timestamp > t_start,
+            Detection.timestamp < t_end,
+            Detection.zone_id.isnot(None),
         )
+        .group_by(Detection.timestamp)
+        .subquery()
+    )
 
-        avg_track_time_q = (
-            db.query(
-                track_subquery.c.class_name,
-                func.avg(track_subquery.c.tdiff).label("avg_track_time_seconds")
-            )
-            .group_by(track_subquery.c.class_name)
+    max_occupations_q = (
+        db.query(
+            func.max(occupations_subq.c.occupation_count).label("max_occupations")
         )
+    )
 
-        # 6. average confidence by class (this was duplicated in your code)
-        avg_confidence_q = (
-            db.query(
-                Detection.class_name.label("class_name"),
-                func.avg(Detection.confidence).label("avg_confidence")
-            )
-            .filter(
-                Detection.camera_id == camera_id,
-                Detection.timestamp > t_start,
-                Detection.timestamp < t_end
-            )
-            .group_by(Detection.class_name)
+    avg_occupations_q = (
+        db.query(
+            func.avg(occupations_subq.c.occupation_count).label("avg_occupations")
         )
+    )
 
-        # 7. number of departures
-
-        departures_subquery = (
-            db.query(
-                    Detection.tracker_id.label("tracker"),
-                    Detection.class_name.label("class_name"))
-            .filter(
-                Detection.camera_id == camera_id,
-                Detection.timestamp > t_start,
-                Detection.timestamp < t_end,
-                Detection.event_type == "departure"
-            ).group_by(Detection.tracker_id,Detection.class_name)
-            .subquery()
+    # 5. average tracking time by class
+    track_subquery = (
+        db.query(
+            Detection.tracker_id.label("t_id"),
+            Detection.class_name.label("class_name"),
+            func.timestampdiff(
+                text("SECOND"),
+                func.min(Detection.timestamp),
+                func.max(Detection.timestamp)
+            ).label("tdiff")
         )
-
-        n_departures = (
-            db.query(departures_subquery.c.class_name,
-                func.count(departures_subquery.c.tracker).label("number_of_departures")
-            )
-            .group_by(departures_subquery.c.class_name)
+        .filter(
+            Detection.camera_id == camera_id,
+            Detection.timestamp > t_start,
+            Detection.timestamp < t_end,
+            Detection.tracker_id.isnot(None),
+            Detection.timestamp.isnot(None),
         )
-
-        # 8. number of new detections
-        detections_subquery = (
-            db.query(
-                    Detection.tracker_id.label("tracker"),
-                    Detection.class_name.label("class_name"))
-            .filter(
-                Detection.camera_id == camera_id,
-                Detection.timestamp > t_start,
-                Detection.timestamp < t_end,
-                Detection.event_type == "detection"
-            ).group_by(Detection.tracker_id,Detection.class_name)
-            .subquery()
+        .group_by(
+            Detection.tracker_id,
+            Detection.class_name
         )
-        
-        n_tracked_detect = (
-            db.query(detections_subquery.c.class_name,
-                func.count(detections_subquery.c.tracker).label("number of tracked items")
-            )
-            .group_by(detections_subquery.c.class_name)
-        )
+        .subquery()
+    )
 
-        to_ret = {
-            "total_tracked_by_class": pd.DataFrame(total_tracked_by_class_q).to_dict(orient="records"),
-            "avg_confidence_by_class": pd.DataFrame(avg_confidence_by_class_q).to_dict(orient="records"),
-            "total_zones": pd.DataFrame(total_zones_q).to_dict(orient="records"),
-            "max_occupations": pd.DataFrame(max_occupations_q).to_dict(orient="records"),
-            "avg_occupations": pd.DataFrame(avg_occupations_q).to_dict(orient="records"),
-            "avg_track_time": pd.DataFrame(avg_track_time_q).to_dict(orient="records"),
-            "avg_confidence": pd.DataFrame(avg_confidence_q).to_dict(orient="records"),
-            "n_departures": pd.DataFrame(n_departures).to_dict(orient="records"),
-            "n_tracked_det": pd.DataFrame(n_tracked_detect).to_dict(orient="records"),
-        }
+    avg_track_time_q = (
+        db.query(
+            track_subquery.c.class_name,
+            func.avg(track_subquery.c.tdiff).label("avg_track_time_seconds")
+        )
+        .group_by(track_subquery.c.class_name)
+    )
+
+    # 7. number of departures
+
+    departures_subquery = (
+        db.query(
+                Detection.tracker_id.label("tracker"),
+                Detection.class_name.label("class_name"))
+        .filter(
+            Detection.camera_id == camera_id,
+            Detection.timestamp > t_start,
+            Detection.timestamp < t_end,
+            Detection.event_type == "departure"
+        ).group_by(Detection.tracker_id,Detection.class_name)
+        .subquery()
+    )
+
+    n_departures = (
+        db.query(departures_subquery.c.class_name,
+            func.count(departures_subquery.c.tracker).label("number_of_departures")
+        )
+        .group_by(departures_subquery.c.class_name)
+    )
+
+    # 8. number of new detections
+    detections_subquery = (
+        db.query(
+                Detection.tracker_id.label("tracker"),
+                Detection.class_name.label("class_name"))
+        .filter(
+            Detection.camera_id == camera_id,
+            Detection.timestamp > t_start,
+            Detection.timestamp < t_end,
+            Detection.event_type == "detection"
+        ).group_by(Detection.tracker_id,Detection.class_name)
+        .subquery()
+    )
+    
+    n_tracked_detect = (
+        db.query(detections_subquery.c.class_name,
+            func.count(detections_subquery.c.tracker).label("number of tracked items")
+        )
+        .group_by(detections_subquery.c.class_name)
+    )
+
+    to_ret = {
+        "total_tracked_by_class": pd.DataFrame(total_tracked_by_class_q).to_dict(orient="records"),
+        "avg_confidence_by_class": pd.DataFrame(avg_confidence_by_class_q).to_dict(orient="records"),
+        "total_zones": pd.DataFrame(total_zones_q).to_dict(orient="records"),
+        "max_occupations": pd.DataFrame(max_occupations_q).to_dict(orient="records"),
+        "avg_occupations": pd.DataFrame(avg_occupations_q).to_dict(orient="records"),
+        "avg_track_time": pd.DataFrame(avg_track_time_q).to_dict(orient="records"),
+        "n_departures": pd.DataFrame(n_departures).to_dict(orient="records"),
+        "n_tracked_det": pd.DataFrame(n_tracked_detect).to_dict(orient="records"),
+    }
     db.close()
     return to_ret
 
 
 @app.get("/analytics/metrics_report/timeseries")
 def metrics_report_timeseries(camera_id, t_start, t_end):
-    with SessionLocal() as db:
-        confidence_ts = (
-            db.query(
-                Detection.timestamp.label("t"),
-                Detection.class_name.label("class_name"),
-                func.avg(Detection.confidence).label("avg_confidence"),
-            )
-            .filter(
-                Detection.camera_id == camera_id,
-                Detection.timestamp > t_start,
-                Detection.timestamp < t_end,
-            )
-            .group_by(Detection.timestamp, Detection.class_name)
-            .all()
+    db= SessionLocal()
+    confidence_ts = (
+        db.query(
+            Detection.timestamp.label("t"),
+            Detection.class_name.label("class_name"),
+            func.avg(Detection.confidence).label("avg_confidence"),
         )
+        .filter(
+            Detection.camera_id == camera_id,
+            Detection.timestamp > t_start,
+            Detection.timestamp < t_end,
+        )
+        .group_by(Detection.timestamp, Detection.class_name)
+        .all()
+    )
 
-        tracked_objects_ts = (
-            db.query(
-                Detection.timestamp.label("t"),
-                Detection.class_name.label("class_name"),
-                func.count(func.distinct(Detection.tracker_id)).label("num_tracked")
-            )
-            .filter(
-                Detection.camera_id == camera_id,
-                Detection.timestamp > t_start,
-                Detection.timestamp < t_end,
-                Detection.tracker_id.isnot(None),
-                Detection.class_name.in_(["car", "pedestrian"])
-            )
-            .group_by(Detection.timestamp, Detection.class_name)
-            .all()
+    tracked_objects_ts = (
+        db.query(
+            Detection.timestamp.label("t"),
+            Detection.class_name.label("class_name"),
+            func.count(func.distinct(Detection.tracker_id)).label("num_tracked")
         )
+        .filter(
+            Detection.camera_id == camera_id,
+            Detection.timestamp > t_start,
+            Detection.timestamp < t_end,
+            Detection.tracker_id.isnot(None),
+            Detection.class_name.in_(["car", "pedestrian"])
+        )
+        .group_by(Detection.timestamp, Detection.class_name)
+        .all()
+    )
 
-        parked_vehicles_ts = (
-            db.query(
-                Detection.timestamp.label("t"),
-                func.count(func.distinct(Detection.tracker_id)).label("num_parked_vehicles")
-            )
-            .filter(
-                Detection.camera_id == camera_id,
-                Detection.timestamp > t_start,
-                Detection.timestamp < t_end,
-                Detection.tracker_id.isnot(None),
-                Detection.zone_id.isnot(None),
-                Detection.class_name == "car"
-            )
-            .group_by(Detection.timestamp)
-            .all()
+    parked_vehicles_ts = (
+        db.query(
+            Detection.timestamp.label("t"),
+            func.count(func.distinct(Detection.tracker_id)).label("num_parked_vehicles")
         )
+        .filter(
+            Detection.camera_id == camera_id,
+            Detection.timestamp > t_start,
+            Detection.timestamp < t_end,
+            Detection.tracker_id.isnot(None),
+            Detection.zone_id.isnot(None),
+            Detection.class_name == "car"
+        )
+        .group_by(Detection.timestamp)
+        .all()
+    )
     db.close()
     return {
             "ts_confidence": pd.DataFrame(confidence_ts).to_dict(orient="records"),

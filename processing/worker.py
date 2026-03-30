@@ -171,6 +171,7 @@ def _persist_detections(
             db.add(zone_occ)
 
 
+
 def _check_departures(db, timestamp: float) -> None:
     """Check for vehicles that left and mark slots empty."""
     for zone_id, state in list(occupancy_timers.items()):

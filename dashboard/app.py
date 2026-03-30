@@ -11,6 +11,7 @@ from datetime import datetime, timedelta
 import matplotlib.pyplot as plt 
 import matplotlib.ticker as ticker
 import numpy as np
+import time
 from db.models import Zone
 
 # current dashboard structure:
@@ -42,7 +43,6 @@ _ZONE_COLORS: list[tuple[int, int, int]] = [
 
 
 def camera_button():
-
     try:
         response = requests.get(f"{API_BASE}/analytics/cameras")
         response.raise_for_status()
@@ -57,6 +57,7 @@ def camera_button():
             st.session_state.confirmed_camera = list(filter(lambda x: x["name"] == option, rows))[0]
             st.session_state.show_zones = False
             st.session_state.show_tracking_map = False
+            st.session_state.show_kpis_live = False
 
     except Exception as e:
         st.error(f"Could not fetch analytics: {e}")
@@ -74,26 +75,27 @@ def camera_selected():
         
         cap, placeholder, zones = place_a_video(camera)
 
-        # bottoni per visualizzare le zone e visualizzare le heatmaps
-        col_bot = st.columns(2)
+        # bottoni per visualizzare le zone, visualizzare le heatmaps, e visualizzare le metriche (KPIs) in tempo reale
+        col_bot = st.columns(3)
         with col_bot[0]:
-            if st.button("Show zones"):
-                st.session_state.show_zones = not st.session_state.show_zones
+            st.checkbox("Show zones", key="show_zones")
         with col_bot[1]:
-            if st.button("Show tracking map"):
-                st.session_state.show_tracking_map = (
-                    not st.session_state.show_tracking_map
-                )
+            st.checkbox("Show tracking map", key="show_tracking_map")
+        with col_bot[2]:
+            st.checkbox("Show main KPIs (live)", key="show_kpis_live")
         
+        if st.session_state.show_kpis_live:
+            request_kpis_live(camera['id'])
+
         if st.session_state.show_tracking_map:
-            st.text("## Tracking Plots and Heatmaps")
+            st.markdown("## Tracking Plots and Heatmaps")
             request_tracking_plots(camera["id"])
         
         # tabella occupazioni
         draw_table(camera)
 
         # create button to create main metrics report (KPI, time series blablabla)
-        st.text("## Metrics Report and Time Series")
+        st.markdown("## Metrics Report and Time Series")
         cols = st.columns(2)
         with cols[0]:
             # setto il tempo iniziale a 24 ore prima
@@ -108,11 +110,80 @@ def camera_selected():
         
         veicoli_fuori(camera)
 
-        continue_video(cap, placeholder, zones)
+        continue_video(rtsp_url=RTSP_URL, placeholder=placeholder, zones=zones)
     else:
         st.info("Please select an option and click the button.")
 
+@st.fragment(run_every=5)  # start with 1-5 seconds, not 0.1
+def request_kpis_live(camera_id):
+    st.markdown("## Live KPIs")
+    placeholder = st.empty()
 
+    with placeholder.container():
+        try:
+            r = requests.get(
+                f"{API_BASE}/analytics/metrics_report/kpi",
+                params={
+                    "camera_id": camera_id,
+                    "t_start": (datetime.now() - timedelta(days=100)).isoformat(),
+                    "t_end": datetime.now().isoformat(),
+                },
+                timeout=5,
+            )
+            r.raise_for_status()
+        except Exception as e:
+            st.error(f"Could not retrieve KPI metrics: {e}")
+            return
+
+        r_j = r.json()
+
+        st.write("### Total Tracked")
+        total_car, total_ped, total = st.columns(3)
+
+        st.write("### Average Confidence")
+        conf_car, conf_ped, conf_avg = st.columns(3)
+
+        st.write("### Occupancies (total and normalized)")
+        occ_max, occ_avg = st.columns(2)
+        total_zones, occ_max_norm, occ_avg_norm = st.columns(3)
+
+        st.write("### Average Time Tracked")
+        avg_time_car, avg_time_ped = st.columns(2)
+
+        st.write("### Amount of tracked objects and departures")
+        n_tracked_cars, n_tracked_peds, n_departures = st.columns(3)
+
+        df_total_tracked = pd.DataFrame(r_j["total_tracked_by_class"])
+        df_avg_conf = pd.DataFrame(r_j["avg_confidence_by_class"])
+        df_zones = pd.DataFrame(r_j["total_zones"])
+        df_max_occs = pd.DataFrame(r_j["max_occupations"])
+        df_avg_occs = pd.DataFrame(r_j["avg_occupations"])
+        df_time = pd.DataFrame(r_j["avg_track_time"])
+        df_ndep = pd.DataFrame(r_j["n_departures"])
+        df_ntracked = pd.DataFrame(r_j["n_tracked_det"])
+
+        total_car.metric("Cars", df_total_tracked.iloc[0, 1])
+        total_ped.metric("Pedestrians", df_total_tracked.iloc[1, 1])
+        total.metric("Both", df_total_tracked.iloc[0, 1] + df_total_tracked.iloc[1, 1])
+
+        conf_car.metric("Cars", f"{df_avg_conf.iloc[0, 1]:.3f}")
+        conf_ped.metric("Pedestrians", f"{df_avg_conf.iloc[1, 1]:.3f}")
+        conf_avg.metric("Average", f"{(df_avg_conf.iloc[0, 1] + df_avg_conf.iloc[1, 1]) * 0.5:.3f}")
+
+        occ_max.metric("Maximum Occupancies", df_max_occs.iloc[0, 0])
+        occ_avg.metric("Average Occupancies", df_avg_occs.iloc[0, 0])
+
+        zones = df_zones.iloc[0, 0]
+        total_zones.metric("Total zones", zones)
+        occ_max_norm.metric("Maximum Occupancies (norm.)", f"{df_max_occs.iloc[0, 0] / zones:.3f}")
+        occ_avg_norm.metric("Average Occupancies (norm.)", f"{df_avg_occs.iloc[0, 0] / zones:.3f}")
+
+        avg_time_car.metric("Cars", df_time.iloc[0, 1])
+        avg_time_ped.metric("Pedestrians", df_time.iloc[1, 1])
+
+        n_tracked_cars.metric("Cars", df_ntracked.iloc[0, 1])
+        n_tracked_peds.metric("Pedestrians", df_ntracked.iloc[1, 1])
+        n_departures.metric("Departures", df_ndep.iloc[0, 1])
 def veicoli_fuori(camera):
     try:
         response = requests.get(
@@ -197,7 +268,6 @@ def request_report(camera_id, t_i, t_f):
             st.dataframe(pd.DataFrame(r_j['max_occupations']))
             st.dataframe(pd.DataFrame(r_j['avg_occupations']))
             st.dataframe(pd.DataFrame(r_j['avg_track_time']))
-            st.dataframe(pd.DataFrame(r_j['avg_confidence']))
             st.dataframe(pd.DataFrame(r_j['n_departures']))
             st.dataframe(pd.DataFrame(r_j['n_tracked_det']))
 
@@ -314,28 +384,75 @@ def draw_zones(canvas: np.ndarray, completed: list[Zone]) -> np.ndarray:
 
     return out
 
+import threading
 
-def continue_video(cap, placeholder, zones=[]):
-    zones = [
+class RTSPBuffer:
+    def __init__(self, url):
+        self.url = url
+        self.cap = cv2.VideoCapture(url)
+        self.lock = threading.Lock()
+        self.frame = None
+        self.running = True
+        self.thread = threading.Thread(target=self._run, daemon=True)
+        self.thread.start()
+
+    def _run(self):
+        while self.running:
+            if self.cap is None or not self.cap.isOpened():
+                time.sleep(0.5)
+                self.cap = cv2.VideoCapture(self.url)
+                continue
+
+            ok, frame = self.cap.read()
+            if not ok:
+                time.sleep(0.1)
+                continue
+
+            with self.lock:
+                self.frame = frame
+
+    def latest(self):
+        with self.lock:
+            return None if self.frame is None else self.frame.copy()
+
+    def stop(self):
+        self.running = False
+        if self.cap is not None:
+            self.cap.release()
+
+
+def parse_zones(zones=None):
+    return [
         Zone(
             id=int(z["id"]),
             name=str(z["name"]),
             polygon=np.array(z["polygon"], dtype=np.int32),
-            camera_id=["camera_id"],
+            camera_id=z["camera_id"],
         )
-        for z in zones
+        for z in (zones or [])
     ]
 
-    while True and not cap is None:
-        ret, frame = cap.read()
-        if st.session_state.show_zones:
-            frame = draw_zones(frame, zones)
-        if not ret:
-            break
-        placeholder.image(frame, channels="BGR")
-    if not cap is None:
-        cap.release()
 
+def get_stream(rtsp_url):
+    if "rtsp_buffer" not in st.session_state:
+        st.session_state.rtsp_buffer = RTSPBuffer(rtsp_url)
+    return st.session_state.rtsp_buffer
+
+
+@st.fragment(run_every=0.05)
+def continue_video(rtsp_url, placeholder, zones=None):
+    stream = get_stream(rtsp_url)
+    frame = stream.latest()
+
+    if frame is None:
+        with placeholder.container():
+            st.info("Waiting for stream...")
+        return
+
+    if st.session_state.get("show_zones", False):
+        frame = draw_zones(frame, parse_zones(zones))
+
+    placeholder.image(frame, channels="BGR", use_container_width=True)
 
 @st.fragment(run_every=10)
 def number_of_cars(camera):

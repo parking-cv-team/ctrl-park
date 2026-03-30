@@ -19,7 +19,8 @@ Base = declarative_base()
 
 def init_db():
     # Create the database if it doesn't exist
-    root_engine = create_engine(f"mysql+pymysql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}")
+    root_engine = create_engine(f"mysql+pymysql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}",
+                                pool_size=25, max_overflow=50, pool_timeout=30)
     with root_engine.connect() as conn:
         conn.execute(text(f"CREATE DATABASE IF NOT EXISTS `{DB_NAME}`"))
     root_engine.dispose()
