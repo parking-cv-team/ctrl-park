@@ -64,10 +64,12 @@ def camera_button():
             st.session_state.show_zones = False
             st.session_state.show_tracking_map = False
 
-        if st.session_state.confirmed_camera is not None:
-            camera = list(
+        camera = list(
                 filter(lambda x: x["name"] == st.session_state.confirmed_camera, rows)
             )[0]
+
+        if st.session_state.confirmed_camera is not None:
+            
             st.success(f"You confirmed: {st.session_state.confirmed_camera}")
 
             number_of_cars(camera)
@@ -83,18 +85,15 @@ def camera_button():
                 camera
             )  # pyright: ignore[reportGeneralTypeIssues]
             if st.session_state.show_tracking_map:
-                request_tracking_plots(
-                    list(filter(lambda x: x["name"] == option, rows))[0]["id"]
-                )
+                request_tracking_plots(camera["id"])
             draw_table(camera)
-            continue_video(cap, placeholder, zones)
         else:
             st.info("Please select an option and click the button.")
 
         # create the other button to shock scatterplot of tracked items
         st.text("## Tracking Plots and Heatmaps")
 
-        request_tracking_plots(list(filter(lambda x: x["name"]==option, rows))[0]['id'])
+        request_tracking_plots(camera['id'])
 
         # create button to create main metrics report (KPI, time series blablabla)
         st.text("## Metrics Report and Time Series")
@@ -104,15 +103,41 @@ def camera_button():
         with cols[1]:
             tf = st.datetime_input("Time End")
 
-        request_report(list(filter(lambda x: x["name"]==option, rows))[0]['id'],
-                       ti, tf)
+        request_report(camera['id'], ti, tf)
         
-        request_timeseries(list(filter(lambda x: x["name"]==option, rows))[0]['id'],
-                       ti, tf)
-
+        request_timeseries(camera['id'], ti, tf)
+        
+        veicoli_fuori(camera)
+        continue_video(cap, placeholder, zones)
     except Exception as e:
         st.error(f"Could not fetch analytics: {e}")
 
+
+def veicoli_fuori(camera):
+    try:
+        response = requests.get(
+            f"{API_BASE}/analytics/cameras/recent/outside_zones", params={"camera_id": camera["id"]}
+        )
+        response.raise_for_status()
+        data = response.json()
+        seen = set()
+        unique = []
+
+        for x in data:
+            if x["event_type"]=="departure":
+                seen.add(x)
+            if x["tracker_id"] in seen:
+                continue
+            unique.append(x)
+            seen.add(x["tracker_id"])
+        
+        for x in unique:
+            st.write(f"Found {x["class"]} outside zones at x:{x["cx"]} y:{x["cy"]} with tracking id: {x["tracker_id"]} at timestamp: {x["time"]}")
+
+
+    except Exception as e:
+        st.error(f"Could not get cars outside parking zones: {e}")
+    pass
 
 # logic to make API request and display the plot
 def request_tracking_plots(camera_id):

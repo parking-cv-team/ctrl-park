@@ -111,6 +111,26 @@ def recent_analytics(camera_id,limit=50):
     db.close()
     return items
 
+@app.get("/analytics/cameras/recent/outside_zones")
+def recent_analytics(camera_id):
+    db = SessionLocal()
+    
+    items = db.query(Detection.id,Detection.tracker_id,Detection.class_name,Detection.event_type,Detection.zone_id,Detection.cx,Detection.cy,Detection.timestamp). \
+        filter(Detection.camera_id == camera_id).filter(Detection.class_name == "car").order_by(Detection.id.desc())
+    db.close()
+    return [
+        {
+            "id": it.id,
+            "tracker_id":it.tracker_id,
+            "class": it.class_name,
+            "cx":it.cx,
+            "cy":it.cy,
+            "time":it.timestamp,
+            "event_type": it.event_type
+        }
+        for it in items if it.zone_id is None
+    ]   
+
 @app.get("/analytics/zones")
 def cameras(camera_id,limit=50):
     limit = int(limit)
