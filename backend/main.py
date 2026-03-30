@@ -322,7 +322,7 @@ def trajectory_analysis(body: TrajectoryRequest):
 
     buf.close()
     plt.close(fig)
-
+    db.close()
     return Response(content=im_bytes, media_type="image/png")
 
 @app.get("/analytics/metrics_report/kpi")
@@ -445,39 +445,44 @@ def metrics_report_kpi(camera_id, t_start, t_end):
         # 7. number of departures
 
         departures_subquery = (
-            db.query(Detection.id,Detection.tracker_id,Detection.event_type,Detection.class_name.label("class_name"))
+            db.query(
+                    Detection.tracker_id.label("tracker"),
+                    Detection.class_name.label("class_name"))
             .filter(
                 Detection.camera_id == camera_id,
                 Detection.timestamp > t_start,
                 Detection.timestamp < t_end,
                 Detection.event_type == "departure"
             ).group_by(Detection.tracker_id,Detection.class_name)
+            .subquery()
         )
 
         n_departures = (
-            db.query(Detection.class_name.label("class_name"),
-                func.count(Detection.id).label("number of departures"))
-            .filter(
-                Detection.camera_id == camera_id,
-                Detection.timestamp > t_start,
-                Detection.timestamp < t_end,
-                Detection.event_type == "departure"
+            db.query(departures_subquery.c.class_name,
+                func.count(departures_subquery.c.tracker).label("number_of_departures")
             )
-            .group_by(Detection.class_name)
+            .group_by(departures_subquery.c.class_name)
         )
 
         # 8. number of new detections
-
-        n_newdetect = (
-            db.query(Detection.class_name.label("class_name"),
-                func.count(Detection.id).label("number of new detections"))
+        detections_subquery = (
+            db.query(
+                    Detection.tracker_id.label("tracker"),
+                    Detection.class_name.label("class_name"))
             .filter(
                 Detection.camera_id == camera_id,
                 Detection.timestamp > t_start,
                 Detection.timestamp < t_end,
-                Detection.event_type == "departure"
+                Detection.event_type == "detection"
+            ).group_by(Detection.tracker_id,Detection.class_name)
+            .subquery()
+        )
+        
+        n_tracked_detect = (
+            db.query(detections_subquery.c.class_name,
+                func.count(detections_subquery.c.tracker).label("number of tracked items")
             )
-            .group_by(Detection.class_name)
+            .group_by(detections_subquery.c.class_name)
         )
 
         to_ret = {
@@ -488,8 +493,10 @@ def metrics_report_kpi(camera_id, t_start, t_end):
             "avg_occupations": pd.DataFrame(avg_occupations_q).to_dict(orient="records"),
             "avg_track_time": pd.DataFrame(avg_track_time_q).to_dict(orient="records"),
             "avg_confidence": pd.DataFrame(avg_confidence_q).to_dict(orient="records"),
+            "n_departures": pd.DataFrame(n_departures).to_dict(orient="records"),
+            "n_tracked_det": pd.DataFrame(n_tracked_detect).to_dict(orient="records"),
         }
-
+    db.close()
     return to_ret
 
 
@@ -544,7 +551,7 @@ def metrics_report_timeseries(camera_id, t_start, t_end):
             .group_by(Detection.timestamp)
             .all()
         )
-
+    db.close()
     return {
             "ts_confidence": pd.DataFrame(confidence_ts).to_dict(orient="records"),
             "ts_objects": pd.DataFrame(tracked_objects_ts).to_dict(orient="records"),

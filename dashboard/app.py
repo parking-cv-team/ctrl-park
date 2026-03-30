@@ -198,11 +198,12 @@ def request_report(camera_id, t_i, t_f):
             st.dataframe(pd.DataFrame(r_j['avg_occupations']))
             st.dataframe(pd.DataFrame(r_j['avg_track_time']))
             st.dataframe(pd.DataFrame(r_j['avg_confidence']))
-            #st.dataframe(pd.DataFrame(r_j['n_departures']))
-            #st.dataframe(pd.DataFrame(r_j['n_tracked_det']))
+            st.dataframe(pd.DataFrame(r_j['n_departures']))
+            st.dataframe(pd.DataFrame(r_j['n_tracked_det']))
 
         else:
             st.error(f"Could not fetch summary... {r.status_code}")            
+
 
 def request_timeseries(camera_id, t_i, t_f):
     # TODO: see if i can map the timestamps better, integers make no sense...
