@@ -269,3 +269,6 @@ def processing_loop(in_queue: Queue, in_zones: List[Zone]):
         
         db.commit()
         in_queue.task_done()
+
+    print("PIPELINE FINISHED")
+    db.close()

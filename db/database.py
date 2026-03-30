@@ -12,7 +12,7 @@ DB_PORT = os.getenv('DB_PORT')
 DB_NAME = os.getenv('DB_NAME')
 
 conn_str = f"mysql+pymysql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
-engine = create_engine(conn_str, connect_args={})
+engine = create_engine(conn_str, connect_args={}, pool_size=25, max_overflow=50, pool_timeout=15)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 

@@ -74,7 +74,6 @@ def recent_analytics(limit=50):
 
 @app.get("/analytics/cameras")
 def cameras():
-    
     db = SessionLocal()
     items = db.query(CameraSource)
     db.close()
@@ -165,23 +164,24 @@ def cameras(camera_id):
 def trajectory_analysis(body: TrajectoryRequest):
     #TODO: treat edge cases, like no parked cars at all/ no pedestrians at all/ no moving cars at all
     camera_id = body.camera_id
-    with SessionLocal() as db:
-        rows_cars_parked = (db.query(Detection.id, Detection.tracker_id, Detection.cx, Detection.cy).
-            filter(Detection.camera_id == camera_id). \
-            filter(Detection.class_name == "car"). \
-            filter(Detection.zone_id != None)
-        )
+    db = SessionLocal()
 
-        rows_cars_moving = (db.query(Detection.id, Detection.tracker_id, Detection.cx, Detection.cy).
-            filter(Detection.camera_id == camera_id). \
-            filter(Detection.class_name == "car"). \
-            filter(Detection.zone_id == None)
-        )
+    rows_cars_parked = (db.query(Detection.id, Detection.tracker_id, Detection.cx, Detection.cy).
+        filter(Detection.camera_id == camera_id). \
+        filter(Detection.class_name == "car"). \
+        filter(Detection.zone_id != None)
+    )
 
-        rows_pedestrians = (db.query(Detection.id, Detection.tracker_id, Detection.cx, Detection.cy).
-            filter(Detection.camera_id == camera_id).
-            filter(Detection.class_name == "pedestrian")
-        )
+    rows_cars_moving = (db.query(Detection.id, Detection.tracker_id, Detection.cx, Detection.cy).
+        filter(Detection.camera_id == camera_id). \
+        filter(Detection.class_name == "car"). \
+        filter(Detection.zone_id == None)
+    )
+
+    rows_pedestrians = (db.query(Detection.id, Detection.tracker_id, Detection.cx, Detection.cy).
+        filter(Detection.camera_id == camera_id).
+        filter(Detection.class_name == "pedestrian")
+    )
 
     df_cars_parked = (pd.DataFrame(rows_cars_parked))
     df_cars_moving = (pd.DataFrame(rows_cars_moving))

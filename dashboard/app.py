@@ -12,7 +12,8 @@ import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
 import numpy as np
 import time
-from db.models import Zone
+from multiprocessing import Process
+from video_player import run_opencv_window as run_rstp_feed
 
 # current dashboard structure:
 #
@@ -30,17 +31,6 @@ load_dotenv()
 
 RTSP_URL = "rtsp://localhost:8554/live.stream"
 API_BASE = os.getenv("API_BASE_URL", "http://localhost:8000")
-_ZONE_COLORS: list[tuple[int, int, int]] = [
-    (0, 255, 0),  # green
-    (0, 165, 255),  # orange
-    (255, 0, 0),  # blue
-    (0, 0, 255),  # red
-    (255, 255, 0),  # cyan
-    (255, 0, 255),  # magenta
-    (0, 255, 255),  # yellow
-    (128, 0, 128),  # purple
-]
-
 
 def camera_button():
     try:
@@ -62,7 +52,6 @@ def camera_button():
     except Exception as e:
         st.error(f"Could not fetch analytics: {e}")
 
-
 def camera_selected():
     camera = st.session_state.confirmed_camera
 
@@ -75,13 +64,17 @@ def camera_selected():
         
         cap, placeholder, zones = place_a_video(camera)
 
+        if play_vid := st.button("Play Video (with zones)"):
+            print("AAAAAARGH")
+            p = Process(target=run_rstp_feed, args=(RTSP_URL, zones), daemon=True) 
+            p.start()
+            p.join()
+
         # bottoni per visualizzare le zone, visualizzare le heatmaps, e visualizzare le metriche (KPIs) in tempo reale
-        col_bot = st.columns(3)
+        col_bot = st.columns(2)
         with col_bot[0]:
-            st.checkbox("Show zones", key="show_zones")
-        with col_bot[1]:
             st.checkbox("Show tracking map", key="show_tracking_map")
-        with col_bot[2]:
+        with col_bot[1]:
             st.checkbox("Show main KPIs (live)", key="show_kpis_live")
         
         if st.session_state.show_kpis_live:
@@ -93,6 +86,9 @@ def camera_selected():
         
         # tabella occupazioni
         draw_table(camera)
+
+        # veicoli fuori
+        veicoli_fuori(camera)
 
         # create button to create main metrics report (KPI, time series blablabla)
         st.markdown("## Metrics Report and Time Series")
@@ -108,9 +104,7 @@ def camera_selected():
         
         request_timeseries(camera['id'], ti, tf)
         
-        veicoli_fuori(camera)
 
-        continue_video(rtsp_url=RTSP_URL, placeholder=placeholder, zones=zones)
     else:
         st.info("Please select an option and click the button.")
 
@@ -292,7 +286,7 @@ def request_timeseries(camera_id, t_i, t_f):
             ts_2 = (pd.DataFrame(r_j['ts_objects']))
             ts_3 = (pd.DataFrame(r_j['ts_parked']))
 
-            fig, axes = plt.subplots(3, 1, figsize=(5, 6))
+            fig, axes = plt.subplots(3, 1, figsize=(10, 7))
 
             fig.suptitle("Timeseries Reports")
 
@@ -358,101 +352,6 @@ def place_a_video(camera):
     
     zones = get_zones_to_draw(camera)
     return (cap, placeholder, zones)
-
-
-def draw_zones(canvas: np.ndarray, completed: list[Zone]) -> np.ndarray:
-    """Render zones onto a copy of canvas."""
-    out = canvas.copy()
-    overlay = canvas.copy()
-
-    for idx, zone in enumerate(completed):
-        color = _ZONE_COLORS[idx % len(_ZONE_COLORS)]
-        pts = zone.polygon.reshape((-1, 1, 2))
-        cv2.fillPoly(overlay, [pts], color)
-        cv2.polylines(out, [pts], isClosed=True, color=color, thickness=2)
-        centroid = zone.polygon.mean(axis=0).astype(int)
-        cv2.putText(
-            out,
-            str(zone.name),
-            tuple(centroid),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.7,
-            color,
-            2,
-            cv2.LINE_AA,
-        )
-
-    return out
-
-import threading
-
-class RTSPBuffer:
-    def __init__(self, url):
-        self.url = url
-        self.cap = cv2.VideoCapture(url)
-        self.lock = threading.Lock()
-        self.frame = None
-        self.running = True
-        self.thread = threading.Thread(target=self._run, daemon=True)
-        self.thread.start()
-
-    def _run(self):
-        while self.running:
-            if self.cap is None or not self.cap.isOpened():
-                time.sleep(0.5)
-                self.cap = cv2.VideoCapture(self.url)
-                continue
-
-            ok, frame = self.cap.read()
-            if not ok:
-                time.sleep(0.1)
-                continue
-
-            with self.lock:
-                self.frame = frame
-
-    def latest(self):
-        with self.lock:
-            return None if self.frame is None else self.frame.copy()
-
-    def stop(self):
-        self.running = False
-        if self.cap is not None:
-            self.cap.release()
-
-
-def parse_zones(zones=None):
-    return [
-        Zone(
-            id=int(z["id"]),
-            name=str(z["name"]),
-            polygon=np.array(z["polygon"], dtype=np.int32),
-            camera_id=z["camera_id"],
-        )
-        for z in (zones or [])
-    ]
-
-
-def get_stream(rtsp_url):
-    if "rtsp_buffer" not in st.session_state:
-        st.session_state.rtsp_buffer = RTSPBuffer(rtsp_url)
-    return st.session_state.rtsp_buffer
-
-
-@st.fragment(run_every=0.05)
-def continue_video(rtsp_url, placeholder, zones=None):
-    stream = get_stream(rtsp_url)
-    frame = stream.latest()
-
-    if frame is None:
-        with placeholder.container():
-            st.info("Waiting for stream...")
-        return
-
-    if st.session_state.get("show_zones", False):
-        frame = draw_zones(frame, parse_zones(zones))
-
-    placeholder.image(frame, channels="BGR", use_container_width=True)
 
 @st.fragment(run_every=10)
 def number_of_cars(camera):
