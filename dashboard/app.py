@@ -12,7 +12,9 @@ from datetime import datetime, timedelta
 import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
 import numpy as np
-from db.models import Zone
+import time
+from multiprocessing import Process
+from video_player import run_opencv_window as run_rstp_feed
 
 # current dashboard structure:
 #
@@ -30,17 +32,6 @@ load_dotenv()
 
 RTSP_URL = "rtsp://localhost:8554/live.stream"
 API_BASE = os.getenv("API_BASE_URL", "http://localhost:8000")
-_ZONE_COLORS: list[tuple[int, int, int]] = [
-    (0, 255, 0),  # green
-    (0, 165, 255),  # orange
-    (255, 0, 0),  # blue
-    (0, 0, 255),  # red
-    (255, 255, 0),  # cyan
-    (255, 0, 255),  # magenta
-    (0, 255, 255),  # yellow
-    (128, 0, 128),  # purple
-]
-
 
 def camera_button():
 
@@ -67,10 +58,10 @@ def camera_button():
             )[0]
             st.session_state.show_zones = False
             st.session_state.show_tracking_map = False
+            st.session_state.show_kpis_live = False
 
     except Exception as e:
         st.error(f"Could not fetch analytics: {e}")
-
 
 def camera_selected():
     camera = st.session_state.confirmed_camera
@@ -83,26 +74,34 @@ def camera_selected():
 
         cap, placeholder, zones = place_a_video(camera)
 
-        # bottoni per visualizzare le zone e visualizzare le heatmaps
+        if play_vid := st.button("Play Video (with zones)"):
+            print("AAAAAARGH (launching rtsp player)")
+            p = Process(target=run_rstp_feed, args=(RTSP_URL, zones), daemon=True) 
+            p.start()
+            p.join()
+
+        # bottoni per visualizzare le zone, visualizzare le heatmaps, e visualizzare le metriche (KPIs) in tempo reale
         col_bot = st.columns(2)
         with col_bot[0]:
-            if st.button("Show zones"):
-                st.session_state.show_zones = not st.session_state.show_zones
+            st.checkbox("Show tracking map", key="show_tracking_map")
         with col_bot[1]:
-            if st.button("Show tracking map"):
-                st.session_state.show_tracking_map = (
-                    not st.session_state.show_tracking_map
-                )
+            st.checkbox("Show main KPIs (live)", key="show_kpis_live")
+        
+        if st.session_state.show_kpis_live:
+            request_kpis_live(camera['id'])
 
         if st.session_state.show_tracking_map:
-            st.text("## Tracking Plots and Heatmaps")
+            st.markdown("## Tracking Plots and Heatmaps")
             request_tracking_plots(camera["id"])
 
         # tabella occupazioni
         draw_table(camera)
 
+        # veicoli fuori
+        veicoli_fuori(camera)
+
         # create button to create main metrics report (KPI, time series blablabla)
-        st.text("## Metrics Report and Time Series")
+        st.markdown("## Metrics Report and Time Series")
         cols = st.columns(2)
         with cols[0]:
             # setto il tempo iniziale a 24 ore prima
@@ -111,17 +110,84 @@ def camera_selected():
         with cols[1]:
             tf = st.datetime_input("Time End")
 
-        request_report(camera["id"], ti, tf)
+        request_report(camera['id'], ti, tf)
+        
+        request_timeseries(camera['id'], ti, tf)
+        
 
-        request_timeseries(camera["id"], ti, tf)
-
-        veicoli_fuori(camera)
-
-        continue_video(cap, placeholder, zones)
     else:
         st.info("Please select an option and click the button.")
 
+@st.fragment(run_every=5)  # start with 1-5 seconds, not 0.1
+def request_kpis_live(camera_id):
+    st.markdown("## Live KPIs")
+    placeholder = st.empty()
 
+    with placeholder.container():
+        try:
+            r = requests.get(
+                f"{API_BASE}/analytics/metrics_report/kpi",
+                params={
+                    "camera_id": camera_id,
+                    "t_start": (datetime.now() - timedelta(days=100)).isoformat(),
+                    "t_end": datetime.now().isoformat(),
+                },
+                timeout=5,
+            )
+            r.raise_for_status()
+        except Exception as e:
+            st.error(f"Could not retrieve KPI metrics: {e}")
+            return
+
+        r_j = r.json()
+
+        st.write("### Total Tracked")
+        total_car, total_ped, total = st.columns(3)
+
+        st.write("### Average Confidence")
+        conf_car, conf_ped, conf_avg = st.columns(3)
+
+        st.write("### Occupancies (total and normalized)")
+        occ_max, occ_avg = st.columns(2)
+        total_zones, occ_max_norm, occ_avg_norm = st.columns(3)
+
+        st.write("### Average Time Tracked")
+        avg_time_car, avg_time_ped = st.columns(2)
+
+        st.write("### Amount of tracked objects and departures")
+        n_tracked_cars, n_tracked_peds, n_departures = st.columns(3)
+
+        df_total_tracked = pd.DataFrame(r_j["total_tracked_by_class"])
+        df_avg_conf = pd.DataFrame(r_j["avg_confidence_by_class"])
+        df_zones = pd.DataFrame(r_j["total_zones"])
+        df_max_occs = pd.DataFrame(r_j["max_occupations"])
+        df_avg_occs = pd.DataFrame(r_j["avg_occupations"])
+        df_time = pd.DataFrame(r_j["avg_track_time"])
+        df_ndep = pd.DataFrame(r_j["n_departures"])
+        df_ntracked = pd.DataFrame(r_j["n_tracked_det"])
+
+        total_car.metric("Cars", df_total_tracked.iloc[0, 1]) # pyright: ignore[reportArgumentType]
+        total_ped.metric("Pedestrians", df_total_tracked.iloc[1, 1]) # pyright: ignore[reportArgumentType]
+        total.metric("Both", df_total_tracked.iloc[0, 1] + df_total_tracked.iloc[1, 1]) # type: ignore
+
+        conf_car.metric("Cars", f"{df_avg_conf.iloc[0, 1]:.3f}")
+        conf_ped.metric("Pedestrians", f"{df_avg_conf.iloc[1, 1]:.3f}")
+        conf_avg.metric("Average", f"{(df_avg_conf.iloc[0, 1] + df_avg_conf.iloc[1, 1]) * 0.5:.3f}") # type: ignore
+
+        occ_max.metric("Maximum Occupancies", df_max_occs.iloc[0, 0]) # type: ignore
+        occ_avg.metric("Average Occupancies", df_avg_occs.iloc[0, 0]) # type: ignore
+
+        zones = df_zones.iloc[0, 0]
+        total_zones.metric("Total zones", zones) # type: ignore
+        occ_max_norm.metric("Maximum Occupancies (norm.)", f"{df_max_occs.iloc[0, 0] / zones:.3f}") # pyright: ignore[reportOperatorIssue]
+        occ_avg_norm.metric("Average Occupancies (norm.)", f"{df_avg_occs.iloc[0, 0] / zones:.3f}") # type: ignore
+
+        avg_time_car.metric("Cars", df_time.iloc[0, 1]) # type: ignore
+        avg_time_ped.metric("Pedestrians", df_time.iloc[1, 1]) # type: ignore
+
+        n_tracked_cars.metric("Cars", df_ntracked.iloc[0, 1]) # type: ignore
+        n_tracked_peds.metric("Pedestrians", df_ntracked.iloc[1, 1]) # type: ignore
+        n_departures.metric("Departures", df_ndep.iloc[0, 1]) # type: ignore
 def veicoli_fuori(camera):
     try:
         response = requests.get(
@@ -205,16 +271,18 @@ def request_report(camera_id, t_i, t_f):
             r_s = r.content.decode()
             r_j = json.loads(r_s)
 
-            st.dataframe(pd.DataFrame(r_j["total_tracked_by_class"]))
-            st.dataframe(pd.DataFrame(r_j["avg_confidence_by_class"]))
-            st.dataframe(pd.DataFrame(r_j["total_zones"]))
-            st.dataframe(pd.DataFrame(r_j["max_occupations"]))
-            st.dataframe(pd.DataFrame(r_j["avg_occupations"]))
-            st.dataframe(pd.DataFrame(r_j["avg_track_time"]))
-            st.dataframe(pd.DataFrame(r_j["avg_confidence"]))
+            st.dataframe(pd.DataFrame(r_j['total_tracked_by_class']))
+            st.dataframe(pd.DataFrame(r_j['avg_confidence_by_class']))
+            st.dataframe(pd.DataFrame(r_j['total_zones']))
+            st.dataframe(pd.DataFrame(r_j['max_occupations']))
+            st.dataframe(pd.DataFrame(r_j['avg_occupations']))
+            st.dataframe(pd.DataFrame(r_j['avg_track_time']))
+            st.dataframe(pd.DataFrame(r_j['n_departures']))
+            st.dataframe(pd.DataFrame(r_j['n_tracked_det']))
 
         else:
             st.error(f"Could not fetch summary... {r.status_code}")
+
 
 
 def request_timeseries(camera_id, t_i, t_f):
@@ -235,7 +303,7 @@ def request_timeseries(camera_id, t_i, t_f):
             ts_2 = pd.DataFrame(r_j["ts_objects"])
             ts_3 = pd.DataFrame(r_j["ts_parked"])
 
-            fig, axes = plt.subplots(3, 1, figsize=(5, 6))
+            fig, axes = plt.subplots(3, 1, figsize=(10, 7))
 
             fig.suptitle("Timeseries Reports")
 
@@ -313,60 +381,14 @@ def draw_table(camera):
 def place_a_video(camera):
     uri = camera["uri"]
     cap = cv2.VideoCapture(uri)
+    placeholder = st.empty()
     if not cap.isOpened():
         st.error(f"Could not open stream: {uri}")
-        return
+        return (None,placeholder,[])
 
-    placeholder = st.empty()
+    
     zones = get_zones_to_draw(camera)
     return (cap, placeholder, zones)
-
-
-def draw_zones(canvas: np.ndarray, completed: list[Zone]) -> np.ndarray:
-    """Render zones onto a copy of canvas."""
-    out = canvas.copy()
-    overlay = canvas.copy()
-
-    for idx, zone in enumerate(completed):
-        color = _ZONE_COLORS[idx % len(_ZONE_COLORS)]
-        pts = zone.polygon.reshape((-1, 1, 2))
-        cv2.fillPoly(overlay, [pts], color)
-        cv2.polylines(out, [pts], isClosed=True, color=color, thickness=2)
-        centroid = zone.polygon.mean(axis=0).astype(int)
-        cv2.putText(
-            out,
-            str(zone.name),
-            tuple(centroid),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.7,
-            color,
-            2,
-            cv2.LINE_AA,
-        )
-
-    return out
-
-
-def continue_video(cap, placeholder, zones=[]):
-    zones = [
-        Zone(
-            id=int(z["id"]),
-            name=str(z["name"]),
-            polygon=np.array(z["polygon"], dtype=np.int32),
-            camera_id=["camera_id"],
-        )
-        for z in zones
-    ]
-
-    while True:
-        ret, frame = cap.read()
-        if st.session_state.show_zones:
-            frame = draw_zones(frame, zones)
-        if not ret:
-            break
-        placeholder.image(frame, channels="BGR")
-    cap.release()
-
 
 @st.fragment(run_every=10)
 def number_of_cars(camera):
@@ -387,7 +409,9 @@ def number_of_cars(camera):
             unique.append(x)
             seen.add(x["tracker_id"])
 
-        st.write(f"### Number of parked cars seen by {camera['name']}: {len(unique)}")
+        st.write(
+            f"#### Number of parked cars seen by {camera['name']}: {len(unique)}"
+        )
 
     except Exception as e:
         st.error(f"Could not fetch the number of cars: {e}")
@@ -452,6 +476,12 @@ def get_mapped_zones():
 
 def body():
     st.title("Ctrl+Park Dashboard")
+    if "confirmed_camera" not in st.session_state:
+            st.session_state.confirmed_camera = None
+    if "show_zones" not in st.session_state:
+        st.session_state.show_zones = False
+    if "show_tracking_map" not in st.session_state:
+        st.session_state.show_tracking_map = False
     camera_form()
     camera_button()
     camera_selected()

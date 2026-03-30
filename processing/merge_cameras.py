@@ -28,10 +28,12 @@ load_dotenv()
 # Constants
 # ---------------------------------------------------------------------------
 TOPDOWN_SCALE = 80  # px/m
+PANEL_W       = 340         # width of the side parameter panel (pixels)
+PANEL_BG      = (45, 45, 45)
 
 CAM_COLORS = [          # BGR
     (220,  80,  80),    # cam 0 — blue
-    ( 80, 200,  80),    # cam 1 — green
+    (0,   165, 255),    # cam 1 — orange
     ( 80,  80, 220),    # cam 2 — red
     (200, 200,  60),    # cam 3 — cyan
     (200,  60, 200),    # cam 4 — magenta
@@ -190,7 +192,6 @@ class CameraView:
                          if cam_data["frame"] is not None
                          else np.zeros((480, 640, 3), np.uint8))
         self.slots    = cam_data["slots"]
-        self.win      = f"Cam {cam_idx}: {cam_data['cam_name']}"
         self.color    = cam_color(cam_idx)
         self.selected = None
         self.paired   = {}   # slot key → partner key
@@ -242,17 +243,23 @@ class CameraView:
                         cv2.FONT_HERSHEY_SIMPLEX, 0.42, (0, 0, 0), 3, cv2.LINE_AA)
             cv2.putText(img, lbl, (cx - 20, cy + 5),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.42, (255, 255, 255), 1, cv2.LINE_AA)
+
+        # Camera label in top-left corner
+        hud = f"Cam {self.cam_idx}: {self.cam_name}"
         if active:
-            status = f"{pair_count}/{need_pairs} pairs"
-            hud = f"Cam {self.cam_idx} [{self.cam_name}] ACTIVE — {status} | C: confirm | U: undo | Esc: abort"
             color = (0, 220, 220)
+            hud += " [ACTIVE]"
         else:
-            hud = f"Cam {self.cam_idx}: {self.cam_name}"
             color = (200, 200, 200)
-        cv2.putText(img, hud, (10, 30), cv2.FONT_HERSHEY_SIMPLEX,
-                    0.55, (0, 0, 0), 4, cv2.LINE_AA)
-        cv2.putText(img, hud, (10, 30), cv2.FONT_HERSHEY_SIMPLEX,
-                    0.55, color, 2, cv2.LINE_AA)
+        cv2.putText(img, hud, (10, 25), cv2.FONT_HERSHEY_SIMPLEX,
+                    0.50, (0, 0, 0), 3, cv2.LINE_AA)
+        cv2.putText(img, hud, (10, 25), cv2.FONT_HERSHEY_SIMPLEX,
+                    0.50, color, 1, cv2.LINE_AA)
+
+        # Active border highlight
+        if active:
+            cv2.rectangle(img, (0, 0), (img.shape[1] - 1, img.shape[0] - 1),
+                          (0, 220, 220), 3)
         return img
 
 
@@ -302,95 +309,510 @@ class PairingState:
         return len(self.pairs) >= self.MIN_PAIRS
 
 
-def _make_cb(state: PairingState, cam_idx: int):
-    def cb(event, x, y, flags, _):
-        if event == cv2.EVENT_LBUTTONDOWN:
-            state.click(cam_idx, x, y)
-    return cb
-
-
 # ---------------------------------------------------------------------------
-# Interactive pairing loop
+# Unified merge UI — single window with sidebar + tiled cameras
 # ---------------------------------------------------------------------------
-def run_pairing(cam_views: list) -> list:
-    """Spanning-tree pairing: user freely chooses which cam pair to link."""
-    n = len(cam_views)
-    step_results = []
-    linked = {0}
-    unlinked = set(range(1, n))
+class MergeUI:
+    """Single-window merge interface with a sidebar panel and tiled camera views."""
 
-    while unlinked:
-        print(f"\n{'='*60}")
-        print(f"Cameras in tree:   {sorted(linked)}")
-        print(f"Cameras to link:   {sorted(unlinked)}")
-        print("Type two camera indices to link (e.g.  0 1 ): ", end="", flush=True)
-        while True:
-            for v in cam_views:
-                cv2.imshow(v.win, v.draw(active=False))
-            cv2.waitKey(16)
-            try:
-                raw = input().strip().split()
-                a_idx, b_idx = int(raw[0]), int(raw[1])
-            except Exception:
-                print("  Invalid input. Try again: ", end="", flush=True)
-                continue
-            if not (0 <= a_idx < n and 0 <= b_idx < n and a_idx != b_idx):
-                print(f"  Indices must be 0..{n-1} and different. Try again: ",
-                      end="", flush=True)
-                continue
-            if a_idx not in linked and b_idx not in linked:
-                print("  At least one cam must already be linked. Try again: ",
-                      end="", flush=True)
-                continue
-            if a_idx not in linked:
-                a_idx, b_idx = b_idx, a_idx
-            break
+    WIN_NAME = "Merge Cameras"
 
-        va, vb = cam_views[a_idx], cam_views[b_idx]
-        for v in cam_views:
+    def __init__(self, cam_views: list[CameraView]):
+        self.cam_views = cam_views
+        self.n = len(cam_views)
+
+        # Layout: compute grid for tiling cameras
+        self.grid_cols = int(np.ceil(np.sqrt(self.n)))
+        self.grid_rows = int(np.ceil(self.n / self.grid_cols))
+
+        # Spanning tree state
+        self.linked = {0}
+        self.unlinked = set(range(1, self.n))
+        self.step_results = []
+
+        # Current pairing state
+        self.state: PairingState | None = None
+        self.active_a: int | None = None
+        self.active_b: int | None = None
+
+        # Pair selection via sidebar buttons
+        self.sel_a: int | None = None
+        self.sel_b: int | None = None
+
+        # UI phase: "select_pair" or "pairing"
+        self.phase = "select_pair"
+        self.aborted = False
+        self.finished = False
+
+        # Message to display in sidebar (feedback)
+        self.message = ""
+        self.message_color = (200, 200, 200)
+
+        # Camera tile layout (computed in _draw)
+        self.tile_w = 0
+        self.tile_h = 0
+        self.canvas_h = 0
+        self.canvas_w = 0
+
+    # ------------------------------------------------------------------
+    # Sidebar panel drawing
+    # ------------------------------------------------------------------
+    def _draw_panel(self, canvas: np.ndarray):
+        panel = canvas[:, :PANEL_W]
+        panel[:] = PANEL_BG
+
+        y = 28
+        cv2.putText(panel, "MERGE CAMERAS", (12, y),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.60, (220, 220, 220), 2, cv2.LINE_AA)
+        y += 10
+        cv2.line(panel, (12, y), (PANEL_W - 12, y), (75, 75, 75), 1)
+        y += 20
+
+        # ── Phase: select_pair ─────────────────────────────────────────
+        if self.phase == "select_pair":
+            # Show linked / unlinked cameras
+            cv2.putText(panel, "Linked:", (12, y),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.40, (100, 210, 120), 1, cv2.LINE_AA)
+            linked_str = ", ".join(str(i) for i in sorted(self.linked))
+            cv2.putText(panel, linked_str, (80, y),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.40, (220, 220, 220), 1, cv2.LINE_AA)
+            y += 20
+
+            cv2.putText(panel, "Unlinked:", (12, y),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.40, (215, 90, 90), 1, cv2.LINE_AA)
+            if self.unlinked:
+                unlinked_str = ", ".join(str(i) for i in sorted(self.unlinked))
+            else:
+                unlinked_str = "none"
+            cv2.putText(panel, unlinked_str, (90, y),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.40, (220, 220, 220), 1, cv2.LINE_AA)
+            y += 24
+
+            cv2.line(panel, (12, y), (PANEL_W - 12, y), (75, 75, 75), 1)
+            y += 16
+
+            # Camera A selector
+            cv2.putText(panel, "Camera A (linked):", (12, y),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.38, (170, 170, 170), 1, cv2.LINE_AA)
+            y += 22
+            self._cam_a_buttons_y = y
+            btn_x = 12
+            for idx in sorted(self.linked):
+                bw = 44
+                active = (self.sel_a == idx)
+                cv2.rectangle(panel, (btn_x, y - 14), (btn_x + bw, y + 8),
+                              (65, 125, 75) if active else (60, 60, 60), -1)
+                cv2.rectangle(panel, (btn_x, y - 14), (btn_x + bw, y + 8),
+                              (120, 120, 120), 1)
+                cv2.putText(panel, str(idx), (btn_x + 14, y + 4),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.42,
+                            (255, 255, 255) if active else (150, 150, 150), 1, cv2.LINE_AA)
+                btn_x += bw + 6
+            y += 22
+
+            # Camera B selector
+            cv2.putText(panel, "Camera B (to link):", (12, y),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.38, (170, 170, 170), 1, cv2.LINE_AA)
+            y += 22
+            self._cam_b_buttons_y = y
+            btn_x = 12
+            cams_for_b = sorted(self.unlinked) if self.unlinked else sorted(set(range(self.n)) - self.linked)
+            self._cam_b_list = cams_for_b
+            for idx in cams_for_b:
+                bw = 44
+                active = (self.sel_b == idx)
+                cv2.rectangle(panel, (btn_x, y - 14), (btn_x + bw, y + 8),
+                              (65, 125, 75) if active else (60, 60, 60), -1)
+                cv2.rectangle(panel, (btn_x, y - 14), (btn_x + bw, y + 8),
+                              (120, 120, 120), 1)
+                cv2.putText(panel, str(idx), (btn_x + 14, y + 4),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.42,
+                            (255, 255, 255) if active else (150, 150, 150), 1, cv2.LINE_AA)
+                btn_x += bw + 6
+            y += 26
+
+            # Start pairing button
+            can_start = (self.sel_a is not None and self.sel_b is not None
+                         and self.sel_a != self.sel_b)
+            self._start_btn_y = y
+            cv2.rectangle(panel, (12, y - 14), (PANEL_W - 12, y + 12),
+                          (45, 120, 55) if can_start else (50, 50, 50), -1)
+            cv2.rectangle(panel, (12, y - 14), (PANEL_W - 12, y + 12),
+                          (100, 200, 110) if can_start else (80, 80, 80), 1)
+            cv2.putText(panel, "Start Pairing (S)", (70, y + 6),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.45,
+                        (255, 255, 255) if can_start else (120, 120, 120), 1, cv2.LINE_AA)
+            y += 30
+
+        # ── Phase: pairing ─────────────────────────────────────────────
+        elif self.phase == "pairing":
+            cv2.putText(panel, f"Pairing: Cam {self.active_a} <-> Cam {self.active_b}",
+                        (12, y), cv2.FONT_HERSHEY_SIMPLEX, 0.42,
+                        (0, 220, 220), 1, cv2.LINE_AA)
+            y += 24
+
+            # Pair count
+            if self.state:
+                cnt = len(self.state.pairs)
+                needed = self.state.MIN_PAIRS
+                color = (100, 210, 120) if cnt >= needed else (255, 210, 75)
+                cv2.putText(panel, f"Pairs: {cnt}/{needed}", (12, y),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.50, color, 1, cv2.LINE_AA)
+                y += 24
+
+                # List current pairs
+                for i, (ka, kb) in enumerate(self.state.pairs):
+                    pair_txt = f"  {i+1}. {ka} <-> {kb}"
+                    cv2.putText(panel, pair_txt, (12, y),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.35,
+                                (180, 220, 180), 1, cv2.LINE_AA)
+                    y += 16
+
+            y += 8
+            cv2.line(panel, (12, y), (PANEL_W - 12, y), (75, 75, 75), 1)
+            y += 16
+
+            # Confirm button
+            can_confirm = self.state and self.state.ready
+            self._confirm_btn_y = y
+            cv2.rectangle(panel, (12, y - 14), (PANEL_W - 12, y + 12),
+                          (45, 120, 55) if can_confirm else (50, 50, 50), -1)
+            cv2.rectangle(panel, (12, y - 14), (PANEL_W - 12, y + 12),
+                          (100, 200, 110) if can_confirm else (80, 80, 80), 1)
+            cv2.putText(panel, "Confirm (C)", (100, y + 6),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.45,
+                        (255, 255, 255) if can_confirm else (120, 120, 120), 1, cv2.LINE_AA)
+            y += 28
+
+            # Undo button
+            self._undo_btn_y = y
+            cv2.rectangle(panel, (12, y - 14), (PANEL_W - 12, y + 12),
+                          (60, 60, 60), -1)
+            cv2.rectangle(panel, (12, y - 14), (PANEL_W - 12, y + 12),
+                          (100, 100, 100), 1)
+            cv2.putText(panel, "Undo Last (U)", (90, y + 6),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.45,
+                        (215, 170, 90), 1, cv2.LINE_AA)
+            y += 28
+
+            # Cancel button
+            self._cancel_btn_y = y
+            cv2.rectangle(panel, (12, y - 14), (PANEL_W - 12, y + 12),
+                          (60, 45, 45), -1)
+            cv2.rectangle(panel, (12, y - 14), (PANEL_W - 12, y + 12),
+                          (120, 80, 80), 1)
+            cv2.putText(panel, "Cancel Pairing", (85, y + 6),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.45,
+                        (215, 90, 90), 1, cv2.LINE_AA)
+            y += 28
+
+        # ── Steps completed ────────────────────────────────────────────
+        y += 8
+        cv2.line(panel, (12, y), (PANEL_W - 12, y), (75, 75, 75), 1)
+        y += 18
+        cv2.putText(panel, "Completed links:", (12, y),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.40, (170, 170, 170), 1, cv2.LINE_AA)
+        y += 18
+        if self.step_results:
+            for step in self.step_results:
+                txt = f"  Cam {step['cam_a']} <-> Cam {step['cam_b']}: {len(step['pairs'])} pairs"
+                cv2.putText(panel, txt, (12, y),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.35,
+                            (180, 220, 180), 1, cv2.LINE_AA)
+                y += 16
+        else:
+            cv2.putText(panel, "  (none yet)", (12, y),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.35,
+                        (120, 120, 120), 1, cv2.LINE_AA)
+            y += 16
+
+        # ── Message ────────────────────────────────────────────────────
+        if self.message:
+            y += 12
+            cv2.putText(panel, self.message, (12, y),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.38,
+                        self.message_color, 1, cv2.LINE_AA)
+            y += 16
+
+        # ── Controls ───────────────────────────────────────────────────
+        y = self.canvas_h - 100
+        cv2.line(panel, (12, y), (PANEL_W - 12, y), (75, 75, 75), 1)
+        y += 18
+        controls = [
+            ("Click slots to pair them", (155, 155, 155)),
+            ("S  start pairing",         ( 95, 215,  95)),
+            ("C  confirm pairs",         ( 95, 215,  95)),
+            ("U  undo last pair",        (215, 170,  90)),
+            ("Esc  exit",                (215,  90,  90)),
+        ]
+        for text, clr in controls:
+            cv2.putText(panel, text, (12, y),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.36, clr, 1, cv2.LINE_AA)
+            y += 16
+
+    # ------------------------------------------------------------------
+    # Full canvas draw with tiled cameras
+    # ------------------------------------------------------------------
+    def _draw(self) -> np.ndarray:
+        # Determine tile size from first camera frame
+        ref_h, ref_w = self.cam_views[0].frame.shape[:2]
+
+        # Target tile size: fit all cameras in available space
+        target_h = max(300, 600 // self.grid_rows)
+        scale = target_h / ref_h
+        self.tile_w = int(ref_w * scale)
+        self.tile_h = int(ref_h * scale)
+
+        right_w = self.grid_cols * self.tile_w
+        self.canvas_w = PANEL_W + right_w
+        self.canvas_h = max(self.grid_rows * self.tile_h, 500)
+
+        canvas = np.full((self.canvas_h, self.canvas_w, 3), 50, dtype=np.uint8)
+
+        # Draw tiled camera views
+        for i, view in enumerate(self.cam_views):
+            row = i // self.grid_cols
+            col = i % self.grid_cols
+            x0 = PANEL_W + col * self.tile_w
+            y0 = row * self.tile_h
+
+            is_active = (self.phase == "pairing" and
+                         view.cam_idx in (self.active_a, self.active_b))
+
+            cam_img = view.draw(
+                active=is_active,
+                pair_count=len(self.state.pairs) if self.state else 0,
+                need_pairs=PairingState.MIN_PAIRS,
+            )
+            resized = cv2.resize(cam_img, (self.tile_w, self.tile_h))
+            canvas[y0:y0 + self.tile_h, x0:x0 + self.tile_w] = resized
+
+        # Draw sidebar panel
+        self._draw_panel(canvas)
+
+        # Vertical separator
+        cv2.line(canvas, (PANEL_W, 0), (PANEL_W, self.canvas_h), (80, 80, 80), 1)
+
+        return canvas
+
+    # ------------------------------------------------------------------
+    # Mouse callback
+    # ------------------------------------------------------------------
+    def _mouse_cb(self, event, x, y, flags, _param):
+        if event != cv2.EVENT_LBUTTONDOWN:
+            return
+
+        # Panel clicks
+        if x < PANEL_W:
+            self._handle_panel_click(x, y)
+            return
+
+        # Camera tile clicks (only during pairing)
+        if self.phase == "pairing" and self.state:
+            self._handle_tile_click(x, y)
+
+    def _handle_panel_click(self, x, y):
+        if self.phase == "select_pair":
+            # Camera A buttons
+            btn_y = getattr(self, '_cam_a_buttons_y', 0)
+            if btn_y - 14 <= y <= btn_y + 8:
+                btn_x = 12
+                for idx in sorted(self.linked):
+                    bw = 44
+                    if btn_x <= x <= btn_x + bw:
+                        self.sel_a = idx
+                        self.message = f"Selected Camera A = {idx}"
+                        self.message_color = (200, 200, 200)
+                        return
+                    btn_x += bw + 6
+
+            # Camera B buttons
+            btn_y = getattr(self, '_cam_b_buttons_y', 0)
+            if btn_y - 14 <= y <= btn_y + 8:
+                btn_x = 12
+                for idx in getattr(self, '_cam_b_list', []):
+                    bw = 44
+                    if btn_x <= x <= btn_x + bw:
+                        self.sel_b = idx
+                        self.message = f"Selected Camera B = {idx}"
+                        self.message_color = (200, 200, 200)
+                        return
+                    btn_x += bw + 6
+
+            # Start pairing button
+            start_y = getattr(self, '_start_btn_y', 0)
+            if start_y - 14 <= y <= start_y + 12 and 12 <= x <= PANEL_W - 12:
+                self._try_start_pairing()
+
+        elif self.phase == "pairing":
+            # Confirm button
+            confirm_y = getattr(self, '_confirm_btn_y', 0)
+            if confirm_y - 14 <= y <= confirm_y + 12 and 12 <= x <= PANEL_W - 12:
+                self._try_confirm()
+                return
+
+            # Undo button
+            undo_y = getattr(self, '_undo_btn_y', 0)
+            if undo_y - 14 <= y <= undo_y + 12 and 12 <= x <= PANEL_W - 12:
+                if self.state:
+                    self.state.undo()
+                return
+
+            # Cancel button
+            cancel_y = getattr(self, '_cancel_btn_y', 0)
+            if cancel_y - 14 <= y <= cancel_y + 12 and 12 <= x <= PANEL_W - 12:
+                self._cancel_pairing()
+                return
+
+    def _handle_tile_click(self, x, y):
+        """Translate click on the tiled camera area to a slot click."""
+        rel_x = x - PANEL_W
+        col = rel_x // self.tile_w
+        row = y // self.tile_h
+        cam_idx_clicked = row * self.grid_cols + col
+
+        if cam_idx_clicked >= self.n:
+            return
+        if cam_idx_clicked not in (self.active_a, self.active_b):
+            return
+
+        # Convert to original frame coordinates
+        ref_h, ref_w = self.cam_views[cam_idx_clicked].frame.shape[:2]
+        local_x = rel_x - col * self.tile_w
+        local_y = y - row * self.tile_h
+        frame_x = local_x * ref_w / self.tile_w
+        frame_y = local_y * ref_h / self.tile_h
+
+        self.state.click(cam_idx_clicked, frame_x, frame_y)
+
+    # ------------------------------------------------------------------
+    # Pairing control
+    # ------------------------------------------------------------------
+    def _try_start_pairing(self):
+        if self.sel_a is None or self.sel_b is None:
+            self.message = "Select both Camera A and B first"
+            self.message_color = (215, 90, 90)
+            return
+        if self.sel_a == self.sel_b:
+            self.message = "A and B must be different"
+            self.message_color = (215, 90, 90)
+            return
+        if self.sel_a not in self.linked:
+            self.message = f"Cam {self.sel_a} not in linked set"
+            self.message_color = (215, 90, 90)
+            return
+
+        self.active_a = self.sel_a
+        self.active_b = self.sel_b
+
+        va = self.cam_views[self.active_a]
+        vb = self.cam_views[self.active_b]
+        # Reset view state
+        for v in self.cam_views:
             v.selected = None
             v.paired = {}
 
-        state = PairingState(va, vb)
-        cv2.waitKey(1)
-        cv2.setMouseCallback(va.win, _make_cb(state, a_idx))
-        cv2.setMouseCallback(vb.win, _make_cb(state, b_idx))
+        self.state = PairingState(va, vb)
+        self.phase = "pairing"
+        self.message = f"Click slots in Cam {self.active_a} and Cam {self.active_b}"
+        self.message_color = (200, 200, 200)
+        print(f"Linking cam {self.active_a} ({va.cam_name})"
+              f" ↔ cam {self.active_b} ({vb.cam_name})")
 
-        print(f"Linking cam {a_idx} ({va.cam_name})"
-              f" ↔ cam {b_idx} ({vb.cam_name})")
-        print(f"  C: confirm (≥{state.MIN_PAIRS} pairs) | U: undo | Esc: abort")
+    def _try_confirm(self):
+        if not self.state or not self.state.ready:
+            self.message = f"Need >= {PairingState.MIN_PAIRS} pairs"
+            self.message_color = (215, 90, 90)
+            return
+
+        print(f"  ✓ {len(self.state.pairs)} pairs confirmed")
+        self.step_results.append({
+            "cam_a": self.active_a,
+            "cam_b": self.active_b,
+            "pairs": [(ka, kb) for ka, kb in self.state.pairs],
+        })
+        self.linked.add(self.active_b)
+        self.unlinked.discard(self.active_b)
+
+        # Reset for next pair
+        self.state = None
+        self.active_a = None
+        self.active_b = None
+        self.sel_a = None
+        self.sel_b = None
+
+        if not self.unlinked:
+            self.finished = True
+            self.message = "All cameras linked!"
+            self.message_color = (100, 210, 120)
+        else:
+            self.phase = "select_pair"
+            self.message = "Pair confirmed. Select next pair."
+            self.message_color = (100, 210, 120)
+
+    def _cancel_pairing(self):
+        self.state = None
+        self.active_a = None
+        self.active_b = None
+        self.phase = "select_pair"
+        self.message = "Pairing cancelled"
+        self.message_color = (215, 170, 90)
+        for v in self.cam_views:
+            v.selected = None
+            v.paired = {}
+
+    # ------------------------------------------------------------------
+    # Main loop
+    # ------------------------------------------------------------------
+    def run(self) -> list:
+        cv2.namedWindow(self.WIN_NAME, cv2.WINDOW_NORMAL)
+        # Show initial frame to realize window
+        cv2.imshow(self.WIN_NAME, np.zeros((400, 600, 3), dtype=np.uint8))
+        cv2.waitKey(50)
+        cv2.setMouseCallback(self.WIN_NAME, self._mouse_cb)
 
         while True:
-            for v in cam_views:
-                is_active = v.cam_idx in (a_idx, b_idx)
-                cv2.imshow(v.win, v.draw(
-                    active=is_active,
-                    pair_count=len(state.pairs),
-                    need_pairs=state.MIN_PAIRS,
-                ))
+            canvas = self._draw()
+            cv2.imshow(self.WIN_NAME, canvas)
+
             key = cv2.waitKey(16) & 0xFF
-            if key in (ord("c"), ord("C")):
-                if state.ready:
+
+            if key == 27:  # Esc
+                self.aborted = True
+                break
+
+            if self.phase == "select_pair":
+                if key in (ord("s"), ord("S")):
+                    self._try_start_pairing()
+            elif self.phase == "pairing":
+                if key in (ord("c"), ord("C")):
+                    self._try_confirm()
+                elif key in (ord("u"), ord("U")):
+                    if self.state:
+                        self.state.undo()
+
+            if self.finished:
+                # Show final state briefly
+                canvas = self._draw()
+                cv2.imshow(self.WIN_NAME, canvas)
+                cv2.waitKey(500)
+                break
+
+            try:
+                if cv2.getWindowProperty(self.WIN_NAME, cv2.WND_PROP_VISIBLE) < 1:
+                    self.aborted = True
                     break
-                print(f"  [!] Need ≥{state.MIN_PAIRS} pairs (have {len(state.pairs)})")
-            elif key in (ord("u"), ord("U")):
-                state.undo()
-            elif key == 27:
-                print("[INFO] Aborted.")
-                cv2.destroyAllWindows()
-                sys.exit(0)
+            except cv2.error:
+                self.aborted = True
+                break
 
-        print(f"  ✓ {len(state.pairs)} pairs confirmed")
-        step_results.append({
-            "cam_a": a_idx,
-            "cam_b": b_idx,
-            "pairs": [(ka, kb) for ka, kb in state.pairs],
-        })
-        linked.add(b_idx)
-        unlinked.discard(b_idx)
+        cv2.destroyAllWindows()
 
-    cv2.destroyAllWindows()
-    return step_results
+        if self.aborted:
+            print("[INFO] Aborted.")
+            sys.exit(0)
+
+        return self.step_results
 
 
 # ---------------------------------------------------------------------------
@@ -588,7 +1010,7 @@ def ensure_topdown(output_dir: Path, cam_data: dict, global_transforms: list):
         topdown_path, cam_name,
         cfg["rows"], cfg["cols"],
         cfg["slot_w"], cfg["slot_h"],
-        cfg.get("row_gap", 0.0), cfg.get("margin", 1.0),
+        cfg.get("row_gap", 0.0),
         slots_list, active,
     )
     print(f"[merge_cameras] Regenerated top-down: {topdown_path}")
@@ -836,22 +1258,11 @@ def main():
         return
 
     # ------------------------------------------------------------------
-    # Open camera windows
+    # Single-window merge UI with sidebar
     # ------------------------------------------------------------------
-    cam_views = []
-    for cam_data in cam_data_list:
-        view = CameraView(cam_data["cam_idx"], cam_data)
-        cv2.namedWindow(view.win, cv2.WINDOW_NORMAL)
-        cv2.waitKey(1)
-        cam_views.append(view)
-    for view in cam_views:
-        cv2.imshow(view.win, view.draw())
-    cv2.waitKey(1)
-
-    # ------------------------------------------------------------------
-    # Interactive pairing
-    # ------------------------------------------------------------------
-    step_results = run_pairing(cam_views)
+    cam_views = [CameraView(d["cam_idx"], d) for d in cam_data_list]
+    ui = MergeUI(cam_views)
+    step_results = ui.run()
 
     # ------------------------------------------------------------------
     # Estimate transforms
