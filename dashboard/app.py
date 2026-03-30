@@ -342,8 +342,21 @@ def number_of_cars(camera):
             f"{API_BASE}/analytics/cameras/recent", params={"camera_id": camera["id"]}
         )
         response.raise_for_status()
+        data = response.json()
+        seen = set()
+        unique = []
+
+        for x in data:
+            if x["event_type"]=="departure":
+                seen.add(x)
+            if x["tracker_id"] in seen:
+                continue
+            unique.append(x)
+            seen.add(x["tracker_id"])
+        
+
         st.write(
-            f"### Number of parked cars seen by {camera['name']}: {response.text}"
+            f"### Number of parked cars seen by {camera['name']}: {len(unique)}"
         )
 
     except Exception as e:

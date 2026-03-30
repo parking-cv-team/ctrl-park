@@ -88,21 +88,28 @@ def cameras():
     ]
 
 @app.get("/analytics/cameras/recent")
-def recent_analytics(camera_id):
+def recent_analytics_number_of_cars(camera_id):
     
     db = SessionLocal()
     
-    items = db.query(func.count(distinct(Detection.tracker_id))). \
+    items = db.query(Detection.id,Detection.tracker_id,Detection.event_type). \
         filter(Detection.camera_id == camera_id). \
-        filter(Detection.class_name == "car").filter(Detection.event_type != "departure"). \
-        order_by(Detection.id.desc()).scalar()
+        filter(Detection.class_name == "car"). \
+        order_by(Detection.id.desc())
 
 
     db.close()
-    return items
+    return [
+        {
+            "id": it.id,
+            "tracker_id":it.tracker_id,
+            "event_type": it.event_type
+        }
+        for it in items
+    ]   
 
 @app.get("/analytics/cameras/recent/outside_zones")
-def recent_analytics(camera_id):
+def recent_analytics_cars_outside_zones(camera_id):
     db = SessionLocal()
     
     items = db.query(Detection.id,Detection.tracker_id,Detection.class_name,Detection.event_type,Detection.zone_id,Detection.cx,Detection.cy,Detection.timestamp). \
@@ -506,7 +513,7 @@ def metrics_report_timeseries(camera_id, t_start, t_end):
         }
      
 @app.get("/analytics/zones/poly")
-def cameras(camera_id,limit=50):
+def zones_from_cameras(camera_id,limit=50):
     limit = int(limit)
     if not limit:
         raise HTTPException(status_code=400, detail="Limit must be an integer")
