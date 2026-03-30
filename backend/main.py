@@ -113,7 +113,7 @@ def recent_analytics_cars_outside_zones(camera_id):
     db = SessionLocal()
     
     items = db.query(Detection.id,Detection.tracker_id,Detection.class_name,Detection.event_type,Detection.zone_id,Detection.cx,Detection.cy,Detection.timestamp). \
-        filter(Detection.camera_id == camera_id).filter(Detection.class_name == "car").order_by(Detection.id.desc())
+        filter(Detection.camera_id == camera_id).filter(Detection.class_name != "pedestrian").order_by(Detection.id.desc())
     db.close()
     return [
         {
@@ -127,6 +127,7 @@ def recent_analytics_cars_outside_zones(camera_id):
         }
         for it in items if it.zone_id is None
     ]   
+
 
 @app.get("/analytics/zones")
 def cameras(camera_id):
