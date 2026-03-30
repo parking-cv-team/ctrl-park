@@ -73,13 +73,8 @@ def recent_analytics(limit=50):
     ]
 
 @app.get("/analytics/cameras")
-def cameras(limit=50):
-    limit = int(limit)
-    if not limit:
-        raise HTTPException(status_code=400, detail="Limit must be an integer")
-    if limit < 1:
-        raise HTTPException(status_code=400, detail="Limit must be positive")
-
+def cameras():
+    
     db = SessionLocal()
     items = db.query(CameraSource)
     db.close()
@@ -93,13 +88,8 @@ def cameras(limit=50):
     ]
 
 @app.get("/analytics/cameras/recent")
-def recent_analytics(camera_id,limit=50):
-    limit = int(limit)
-    if not limit:
-        raise HTTPException(status_code=400, detail="Limit must be an integer")
-    if limit < 1:
-        raise HTTPException(status_code=400, detail="Limit must be positive")
-
+def recent_analytics(camera_id):
+    
     db = SessionLocal()
     
     items = db.query(func.count(distinct(Detection.tracker_id))). \
@@ -132,13 +122,8 @@ def recent_analytics(camera_id):
     ]   
 
 @app.get("/analytics/zones")
-def cameras(camera_id,limit=50):
-    limit = int(limit)
-    if not limit:
-        raise HTTPException(status_code=400, detail="Limit must be an integer")
-    if limit < 1:
-        raise HTTPException(status_code=400, detail="Limit must be positive")
-
+def cameras(camera_id):
+    
     db = SessionLocal()
     items = db.query(Zone).filter(Zone.camera_id == camera_id).all()
     zones = [

@@ -74,12 +74,15 @@ def camera_button():
 
             number_of_cars(camera)
 
-            if st.button("Show zones"):
-                st.session_state.show_zones = not st.session_state.show_zones
-            if st.button("Show tracking map"):
-                st.session_state.show_tracking_map = (
-                    not st.session_state.show_tracking_map
-                )
+            col_bot = st.columns(2)
+            with col_bot[0]:
+                if st.button("Show zones"):
+                    st.session_state.show_zones = not st.session_state.show_zones
+            with col_bot[1]:
+                if st.button("Show tracking map"):
+                    st.session_state.show_tracking_map = (
+                        not st.session_state.show_tracking_map
+                    )
 
             cap, placeholder, zones = place_a_video(
                 camera
@@ -340,7 +343,7 @@ def number_of_cars(camera):
         )
         response.raise_for_status()
         st.write(
-            f"### Number of cars in the last minute seen by {camera['name']}: {response.text}"
+            f"### Number of parked cars seen by {camera['name']}: {response.text}"
         )
 
     except Exception as e:
