@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 import pandas as pd 
 import seaborn as sns
 import json
-
+from datetime import datetime, timedelta
 import matplotlib.pyplot as plt 
 import matplotlib.ticker as ticker
 import numpy as np
@@ -56,53 +56,55 @@ def camera_button():
             st.session_state.show_tracking_map = False
 
         option = st.selectbox(
-            "## Choose a camera to see occupancy:", tuple([i["name"] for i in rows])
+            "## Choose a camera to see related data:", tuple([i["name"] for i in rows])
         )
 
         if st.button("Confirm Selection"):
-            st.session_state.confirmed_camera = option
+            st.session_state.confirmed_camera = list(filter(lambda x: x["name"] == option, rows))[0]
             st.session_state.show_zones = False
             st.session_state.show_tracking_map = False
 
-        camera = list(
-                filter(lambda x: x["name"] == st.session_state.confirmed_camera, rows)
-            )[0]
+    except Exception as e:
+        st.error(f"Could not fetch analytics: {e}")
 
-        if st.session_state.confirmed_camera is not None:
-            
-            st.success(f"You confirmed: {st.session_state.confirmed_camera}")
 
-            number_of_cars(camera)
+def camera_selected():
+    camera = st.session_state.confirmed_camera
 
-            col_bot = st.columns(2)
-            with col_bot[0]:
-                if st.button("Show zones"):
-                    st.session_state.show_zones = not st.session_state.show_zones
-            with col_bot[1]:
-                if st.button("Show tracking map"):
-                    st.session_state.show_tracking_map = (
-                        not st.session_state.show_tracking_map
-                    )
+    if st.session_state.confirmed_camera is not None:
+        
+        st.success(f"You confirmed: {st.session_state.confirmed_camera}")
 
-            cap, placeholder, zones = place_a_video(
-                camera
-            )  # pyright: ignore[reportGeneralTypeIssues]
-            if st.session_state.show_tracking_map:
-                request_tracking_plots(camera["id"])
-            draw_table(camera)
-        else:
-            st.info("Please select an option and click the button.")
+        number_of_cars(camera)
 
-        # create the other button to shock scatterplot of tracked items
-        st.text("## Tracking Plots and Heatmaps")
+        
+        cap, placeholder, zones = place_a_video(camera)
 
-        request_tracking_plots(camera['id'])
+        # bottoni per visualizzare le zone e visualizzare le heatmaps
+        col_bot = st.columns(2)
+        with col_bot[0]:
+            if st.button("Show zones"):
+                st.session_state.show_zones = not st.session_state.show_zones
+        with col_bot[1]:
+            if st.button("Show tracking map"):
+                st.session_state.show_tracking_map = (
+                    not st.session_state.show_tracking_map
+                )
+        
+        if st.session_state.show_tracking_map:
+            st.text("## Tracking Plots and Heatmaps")
+            request_tracking_plots(camera["id"])
+        
+        # tabella occupazioni
+        draw_table(camera)
 
         # create button to create main metrics report (KPI, time series blablabla)
         st.text("## Metrics Report and Time Series")
         cols = st.columns(2)
         with cols[0]:
-            ti = st.datetime_input("Time Start")
+            # setto il tempo iniziale a 24 ore prima
+            default_dt = datetime.now() - timedelta(days=1)
+            ti = st.datetime_input("Time Start",value=default_dt)
         with cols[1]:
             tf = st.datetime_input("Time End")
 
@@ -111,9 +113,10 @@ def camera_button():
         request_timeseries(camera['id'], ti, tf)
         
         veicoli_fuori(camera)
+
         continue_video(cap, placeholder, zones)
-    except Exception as e:
-        st.error(f"Could not fetch analytics: {e}")
+    else:
+        st.info("Please select an option and click the button.")
 
 
 def veicoli_fuori(camera):
@@ -383,6 +386,7 @@ def body():
     st.title("Ctrl+Park Dashboard")
     camera_form()
     camera_button()
+    camera_selected()
 
 
 body()
