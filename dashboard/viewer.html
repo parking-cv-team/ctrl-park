@@ -29,7 +29,7 @@
                 75,
                 window.innerWidth / window.innerHeight,
                 0.1,
-                1000,
+                500,
             );
             camera.position.set(0, 20, 50);
 
@@ -60,7 +60,7 @@
                 down: false,
             };
 
-            let moveSpeed = 0.3;
+            let moveSpeed = 0.2;
             let mouseDown = false;
 
             window.addEventListener("keydown", (event) => {
@@ -126,7 +126,10 @@
                 const sensitivity = 0.002;
                 yawObject.rotation.y -= event.movementX * sensitivity;
                 pitchObject.rotation.x -= event.movementY * sensitivity;
-                pitchObject.rotation.x = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, pitchObject.rotation.x));
+                pitchObject.rotation.x = Math.max(
+                    -Math.PI / 2,
+                    Math.min(Math.PI / 2, pitchObject.rotation.x),
+                );
             });
 
             // Reset movement flags when frame loses focus
@@ -151,8 +154,12 @@
 
             function updateFirstPerson(delta) {
                 const direction = new THREE.Vector3();
-                const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(yawObject.quaternion);
-                const right = new THREE.Vector3(1, 0, 0).applyQuaternion(yawObject.quaternion);
+                const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(
+                    yawObject.quaternion,
+                );
+                const right = new THREE.Vector3(1, 0, 0).applyQuaternion(
+                    yawObject.quaternion,
+                );
 
                 if (movement.forward) direction.add(forward);
                 if (movement.backward) direction.sub(forward);
@@ -163,6 +170,9 @@
 
                 direction.normalize().multiplyScalar(moveSpeed * delta);
                 yawObject.position.add(direction);
+
+                // Ground collision: clamp altitude so player can't go below ground
+                yawObject.position.y = Math.max(0.5, yawObject.position.y);
             }
 
             // Lighting
@@ -174,108 +184,52 @@
             directionalLight.castShadow = true;
             directionalLight.shadow.mapSize.width = 2048;
             directionalLight.shadow.mapSize.height = 2048;
-            directionalLight.shadow.camera.left = -100;
-            directionalLight.shadow.camera.right = 100;
-            directionalLight.shadow.camera.top = 100;
-            directionalLight.shadow.camera.bottom = -100;
-            directionalLight.shadow.camera.far = 200;
+            directionalLight.shadow.camera.left = -1000;
+            directionalLight.shadow.camera.right = 1000;
+            directionalLight.shadow.camera.top = 1000;
+            directionalLight.shadow.camera.bottom = -1000;
+            directionalLight.shadow.camera.far = 500;
             scene.add(directionalLight);
 
             // Ground plane
             const groundGeometry = new THREE.PlaneGeometry(200, 200);
             const groundMaterial = new THREE.MeshLambertMaterial({
-                color: 0x90ee90,
+                color: 0x808080,
             });
             const ground = new THREE.Mesh(groundGeometry, groundMaterial);
             ground.rotation.x = -Math.PI / 2;
             ground.receiveShadow = true;
             scene.add(ground);
 
-            //Auto generated demo scene from here, just to test the viewer
+            // Load zones from Python or use default demo zones
+            let zonesData = window.zonesDataFromPython;
+            console.log(zonesData);
+            const zoneColors = [0xff6b6b];
 
-            // Example zones data (from example_zones.py)
-            const zonesData = [
-                {
-                    id: 1,
-                    name: "Zone A - Upper Level",
-                    points: [
-                        [-20, -30],
-                        [20, -30],
-                        [20, 0],
-                        [-20, 0],
-                    ],
-                    occupancy: 5,
-                },
-                {
-                    id: 2,
-                    name: "Zone B - Lower Level",
-                    points: [
-                        [-20, 5],
-                        [20, 5],
-                        [20, 35],
-                        [-20, 35],
-                    ],
-                    occupancy: 8,
-                },
-            ];
-            const zoneColors = [
-                0xff6b6b, 0x4ecdc4, 0x45b7d1, 0xffa07a, 0x98d8c8,
-            ];
-            // Function to create a zone with both plane (floor) and mesh (walls)
-            function createZone(zoneData, index) {
-                const points = zoneData.points;
-                if (points.length < 3) return;
+            // Persistent object to store zone meshes by ID
+            const zonesMeshes = {};
+            // Persistent object to store label sprites by zone ID
+            const labelsSprites = {};
+            // Persistent object to store zone points by ID (for label positioning)
+            const zonesPoints = {};
 
-                const color = zoneColors[index % zoneColors.length];
-                const height = 3; // Height of the walls
-
-                // Create shape from 2D polygon for the floor
-                const shape = new THREE.Shape();
-                shape.moveTo(points[0][0], points[0][1]);
-                for (let i = 1; i < points.length; i++) {
-                    shape.lineTo(points[i][0], points[i][1]);
+            // Function to create or update a zone label
+            function updateZoneLabel(zoneId, labelText) {
+                // Get zone data to find its center
+                if (!zonesPoints[zoneId]) {
+                    console.warn(
+                        `Zone data with ID ${zoneId} not found for label`,
+                    );
+                    return;
                 }
-                shape.lineTo(points[0][0], points[0][1]); // Close shape
 
-                // Create floor mesh
-                const floorGeometry = new THREE.ShapeGeometry(shape);
-                const floorMaterial = new THREE.MeshLambertMaterial({
-                    color: color,
-                    transparent: true,
-                    opacity: 0.8,
-                });
-                const floor = new THREE.Mesh(floorGeometry, floorMaterial);
-                floor.rotation.x = -Math.PI / 2; // Rotate to lie flat on ground
-                floor.receiveShadow = true;
-                scene.add(floor);
+                // Remove old label if it exists
+                if (labelsSprites[zoneId]) {
+                    scene.remove(labelsSprites[zoneId]);
+                }
 
-                // Create walls (extruded mesh)
-                const extrudeSettings = {
-                    depth: height,
-                    bevelEnabled: false,
-                };
-                const wallGeometry = new THREE.ExtrudeGeometry(
-                    shape,
-                    extrudeSettings,
-                );
-                const wallMaterial = new THREE.MeshLambertMaterial({
-                    color: color,
-                    transparent: true,
-                    opacity: 0.6,
-                });
-                const walls = new THREE.Mesh(wallGeometry, wallMaterial);
-                walls.position.y = height / 2; // Center vertically
-                walls.castShadow = true;
-                walls.receiveShadow = true;
-                scene.add(walls);
-
-                // Add zone label
-                addZoneLabel(points, zoneData.name, color);
-            }
-
-            // Function to add zone labels
-            function addZoneLabel(points, name, color) {
-                // Calculate centroid
+                // Calculate centroid of the zone polygon
+                const points = zonesPoints[zoneId];
                 let cx = 0,
                     cz = 0;
                 points.forEach((p) => {
@@ -284,36 +238,189 @@
                 });
                 cx /= points.length;
                 cz /= points.length;
+                cz = -cz; // Flip Z due to mesh rotation
 
                 // Create canvas for text
                 const canvas = document.createElement("canvas");
-                canvas.width = 256;
-                canvas.height = 128;
+                canvas.width = 64;
+                canvas.height = 32;
                 const ctx = canvas.getContext("2d");
 
-                ctx.fillStyle = "rgba(0, 0, 0, 0.7)";
+                ctx.fillStyle = "rgba(0, 0, 0, 0.8)";
                 ctx.fillRect(0, 0, canvas.width, canvas.height);
                 ctx.fillStyle = "#FFFFFF";
-                ctx.font = "bold 24px Arial";
+                ctx.font = "bold 7px Arial";
                 ctx.textAlign = "center";
-                ctx.fillText(name, canvas.width / 2, 50);
+                ctx.textBaseline = "middle";
+
+                // Draw multi-line text
+                const lines = labelText.split("\n");
+                const lineHeight = 9;
+                const startY =
+                    (canvas.height - (lines.length - 1) * lineHeight) / 2;
+
+                lines.forEach((line, i) => {
+                    ctx.fillText(
+                        line,
+                        canvas.width / 2,
+                        startY + i * lineHeight,
+                    );
+                });
 
                 const texture = new THREE.CanvasTexture(canvas);
                 const spriteMaterial = new THREE.SpriteMaterial({
                     map: texture,
                 });
                 const sprite = new THREE.Sprite(spriteMaterial);
-                sprite.position.set(cx, 6, cz); // Above the walls
-                sprite.scale.set(8, 4, 1);
+                sprite.position.set(cx, 1, cz); // Position above zone center
+                sprite.scale.set(0.8, 0.4, 1); // Much smaller scale
                 scene.add(sprite);
+                labelsSprites[zoneId] = sprite;
             }
+
+            // Function to create a zone with ground-level depression
+            function createZone(zoneData, index) {
+                const points = zoneData.points;
+                if (points.length < 3) return;
+
+                const color = zoneColors[index % zoneColors.length];
+                const depth = 0.2; // Slight depth into the ground
+                const margin = 0.01; // Small margin to prevent clipping
+
+                // Create shape from 2D polygon
+                const shape = new THREE.Shape();
+                shape.moveTo(points[0][0], points[0][1]);
+                for (let i = 1; i < points.length; i++) {
+                    shape.lineTo(points[i][0], points[i][1]);
+                }
+                shape.lineTo(points[0][0], points[0][1]); // Close shape
+
+                // Create extruded zone (slightly depressed into ground)
+                const extrudeSettings = {
+                    depth: depth,
+                    bevelEnabled: false,
+                };
+                const zoneGeometry = new THREE.ExtrudeGeometry(
+                    shape,
+                    extrudeSettings,
+                );
+                const zoneMaterial = new THREE.MeshLambertMaterial({
+                    color: color,
+                    transparent: true,
+                    opacity: 0.8,
+                    polygonOffset: true,
+                    polygonOffsetUnits: 1,
+                    depthWrite: false,
+                });
+                const zone = new THREE.Mesh(zoneGeometry, zoneMaterial);
+                zone.rotation.x = -Math.PI / 2; // Rotate to lie flat on ground
+                zone.position.y = margin; // Small positive margin above ground to prevent clipping
+                zone.castShadow = false; // Don't cast shadows to avoid clipping artifacts
+                zone.receiveShadow = true;
+                // Ensure bounds are computed for frustum culling
+                zone.geometry.computeBoundingBox();
+                zone.geometry.computeBoundingSphere();
+                scene.add(zone);
+
+                // Store zone mesh by ID for later reference
+                zonesMeshes[zoneData.id] = zone;
+                // Store zone data (points) for label positioning
+                zonesPoints[zoneData.id] = zoneData.points;
+            }
+
+            // Function to update a zone's color by ID
+            function updateZoneColor(zoneId, colorHex) {
+                if (zonesMeshes[zoneId]) {
+                    zonesMeshes[zoneId].material.color.setHex(colorHex);
+                } else {
+                    console.warn(`Zone with ID ${zoneId} not found`);
+                }
+            }
+
+            // Poll backend for zone occupancy status updates
+            const POLL_INTERVAL = 5000; // 5 seconds, js uses ms because of course it does
+            const COLOR_FREE_VARIANTS = [
+                0x00ff00, // Bright green
+                0x00dd00, // Slightly darker green
+                0x00bb00, // Medium green
+                0x009900, // Darker green
+                0x007700, // Very dark green
+            ]; // Green variants
+            const COLOR_OCCUPIED_VARIANTS = [
+                0xff0000, // Bright red
+                0xdd0000, // Slightly darker red
+                0xbb0000, // Medium red
+                0x990000, // Darker red
+                0x770000, // Very dark red
+            ]; // Red variants
+
+            async function pollZoneStatus() {
+                try {
+                    const apiUrl = window.API_BASE || "http://localhost:8000";
+                    const response = await fetch(
+                        `${apiUrl}/mapped_zones/status`,
+                    );
+                    if (!response.ok) {
+                        console.error(
+                            "Failed to fetch zone status:",
+                            response.status,
+                        );
+                        return;
+                    }
+
+                    const updates = await response.json();
+
+                    updates.forEach((update) => {
+                        // Use zone ID to pick alternating color variant (5 variants)
+                        const colorVariant = update.mapped_zone_id % 5;
+                        const color = update.is_occupied
+                            ? COLOR_OCCUPIED_VARIANTS[colorVariant]
+                            : COLOR_FREE_VARIANTS[colorVariant];
+                        updateZoneColor(update.mapped_zone_id, color);
+
+                        // Update label with occupancy status and timestamp
+                        const statusText = update.is_occupied
+                            ? "OCCUPIED"
+                            : "FREE";
+                        let labelText = statusText;
+
+                        if (update.last_occupancy_time) {
+                            const updateTime = new Date(
+                                update.last_occupancy_time,
+                            );
+                            const now = new Date();
+                            const diffMs = now - updateTime;
+                            const diffSecs = Math.floor(diffMs / 1000);
+                            let timeStr;
+                            if (diffSecs < 60) {
+                                timeStr = `${diffSecs}s ago`;
+                            } else if (diffSecs < 3600) {
+                                const mins = Math.floor(diffSecs / 60);
+                                timeStr = `${mins}m ago`;
+                            } else {
+                                const hours = Math.floor(diffSecs / 3600);
+                                timeStr = `${hours}h ago`;
+                            }
+                            labelText = `${statusText}\n${timeStr}`;
+                        }
+
+                        updateZoneLabel(update.mapped_zone_id, labelText);
+                    });
+                } catch (error) {
+                    console.error("Error polling zone status:", error);
+                }
+            }
+
+            // Start polling
+            pollZoneStatus(); // Poll immediately on load
+            setInterval(pollZoneStatus, POLL_INTERVAL);
 
             // Create all zones
             zonesData.forEach((zone, index) => {
                 createZone(zone, index);
+                // Create initial label
+                updateZoneLabel(zone.id, "?");
             });
-
-            //End of auto generated demo scene
 
             // Animation loop
             let prevTime = performance.now();

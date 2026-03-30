@@ -1,8 +1,9 @@
 from fastapi import FastAPI, HTTPException, Response
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import os
 from dotenv import load_dotenv
-from db import init_db, SessionLocal, CameraSource, Zone,ZoneOccupancy
+from db import init_db, SessionLocal, CameraSource, Zone,ZoneOccupancy, MappedZone
 from db.models import Detection
 from datetime import datetime, timedelta, timezone
 from sqlalchemy import func,distinct,text
@@ -23,6 +24,15 @@ import io
 load_dotenv()
 
 app = FastAPI(title="Ctrl+Park API")
+
+# Add CORS middleware to allow requests from Streamlit and other origins
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Allow all origins (adjust in production)
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 init_db()
 
@@ -526,3 +536,61 @@ def zones_from_cameras(camera_id,limit=50):
     db.close()
     
     return items
+
+@app.get("/mapped_zones/poly")
+def mapped_zones():    
+    db = SessionLocal()
+    items = db.query(MappedZone).all()
+    db.close()
+    
+    return items
+
+@app.get("/mapped_zones/status")
+def get_mapped_zones_status():
+    db = SessionLocal()
+    
+    all_mapped_zones = db.query(MappedZone).all()
+    
+    result = []
+    
+    for mapped_zone in all_mapped_zones:
+        # Find all camera-specific zones that reference this mapped zone
+        camera_zones = db.query(Zone.id).filter(Zone.mapped_zone_id == mapped_zone.id).all()
+        zone_ids = [z[0] for z in camera_zones]
+        
+        if not zone_ids:
+            # No zones tied to this mapped zone, so we consider it free because it was never marked occupied
+            result.append({
+                "mapped_zone_id": mapped_zone.id,
+                "last_occupancy_time": None,
+                "is_occupied": False,
+            })
+            continue
+        
+        # Find the most recent occupancy across all zones referencing this mapped zone
+        latest_occupancy = (
+            db.query(ZoneOccupancy, Detection.timestamp)
+            .join(Detection, ZoneOccupancy.detection_id == Detection.id)
+            .filter(ZoneOccupancy.zone_id.in_(zone_ids))
+            .order_by(ZoneOccupancy.id.desc())
+            .first()
+        )
+        
+        if latest_occupancy is None:
+            result.append({
+                "mapped_zone_id": mapped_zone.id,
+                "last_occupancy_time": None,
+                "is_occupied": False,
+            })
+        else:
+            occupancy_record, timestamp = latest_occupancy
+            is_occupied = occupancy_record.tracker_id is not None
+            
+            result.append({
+                "mapped_zone_id": mapped_zone.id,
+                "last_occupancy_time": timestamp.isoformat() if timestamp else None,
+                "is_occupied": is_occupied,
+            })
+    
+    db.close()
+    return result
