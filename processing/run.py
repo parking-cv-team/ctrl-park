@@ -35,8 +35,9 @@ def main():
 
     
     zones = get_parking_zones(camera_uri)
-    if zones is None:
-        zones = []
+
+    while zones is None:
+        zones = get_parking_zones(camera_uri)
 
     frame_queue = Queue()
 

@@ -1100,20 +1100,24 @@ def run_visualize(uri: str):
 # ---------------------------------------------------------------------------
 # Main / CLI
 # ---------------------------------------------------------------------------
-def main():
+def main(uri = None):
     parser = argparse.ArgumentParser(
         description="Homography-based parking lot calibration - single camera.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    parser.add_argument("--uri", required=True,
-                        help="Video file path or RTSP stream URI")
+    if uri == None:
+        parser.add_argument("--uri", required=True,
+                            help="Video file path or RTSP stream URI")
+
     parser.add_argument("--recalibrate", action="store_true",
                         help="Redo interactive calibration even if config exists")
     parser.add_argument("--visualize", action="store_true",
                         help="Show calibrated zones on live video (no write)")
     args = parser.parse_args()
 
-    uri      = args.uri
+    if uri == None:
+        uri = args.uri
+
     cam_name = uri_to_cam_name(uri)
     configs_dir, output_dir = get_calibration_dirs()
 

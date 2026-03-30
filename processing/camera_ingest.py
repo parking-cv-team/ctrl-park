@@ -9,6 +9,7 @@ from db.models import CameraSource, Zone
 from .zones import _load_zone_config_from_db
 from pathlib import Path
 
+from .calibrate_parking import main as run_calibration
 
 load_dotenv()
 
@@ -22,7 +23,9 @@ def get_parking_zones(uri):
             f"                Run calibration first:\n"
             f"                  python -m processing.calibrate_parking --uri {uri}"
         )
-        return None
+
+        run_calibration(uri)
+        return None 
 
     if not zone_config.zones:
         print(
@@ -30,6 +33,7 @@ def get_parking_zones(uri):
             f"                Re-run calibration:\n"
             f"                  python -m processing.calibrate_parking --uri {uri}"
         )
+        run_calibration(uri)
         return None
 
     return zone_config.zones
