@@ -65,7 +65,7 @@ def camera_selected():
         cap, placeholder, zones = place_a_video(camera)
 
         if play_vid := st.button("Play Video (with zones)"):
-            print("AAAAAARGH")
+            print("AAAAAARGH (launching rtsp player)")
             p = Process(target=run_rstp_feed, args=(RTSP_URL, zones), daemon=True) 
             p.start()
             p.join()
@@ -156,28 +156,28 @@ def request_kpis_live(camera_id):
         df_ndep = pd.DataFrame(r_j["n_departures"])
         df_ntracked = pd.DataFrame(r_j["n_tracked_det"])
 
-        total_car.metric("Cars", df_total_tracked.iloc[0, 1])
-        total_ped.metric("Pedestrians", df_total_tracked.iloc[1, 1])
-        total.metric("Both", df_total_tracked.iloc[0, 1] + df_total_tracked.iloc[1, 1])
+        total_car.metric("Cars", df_total_tracked.iloc[0, 1]) # pyright: ignore[reportArgumentType]
+        total_ped.metric("Pedestrians", df_total_tracked.iloc[1, 1]) # pyright: ignore[reportArgumentType]
+        total.metric("Both", df_total_tracked.iloc[0, 1] + df_total_tracked.iloc[1, 1]) # type: ignore
 
         conf_car.metric("Cars", f"{df_avg_conf.iloc[0, 1]:.3f}")
         conf_ped.metric("Pedestrians", f"{df_avg_conf.iloc[1, 1]:.3f}")
-        conf_avg.metric("Average", f"{(df_avg_conf.iloc[0, 1] + df_avg_conf.iloc[1, 1]) * 0.5:.3f}")
+        conf_avg.metric("Average", f"{(df_avg_conf.iloc[0, 1] + df_avg_conf.iloc[1, 1]) * 0.5:.3f}") # type: ignore
 
-        occ_max.metric("Maximum Occupancies", df_max_occs.iloc[0, 0])
-        occ_avg.metric("Average Occupancies", df_avg_occs.iloc[0, 0])
+        occ_max.metric("Maximum Occupancies", df_max_occs.iloc[0, 0]) # type: ignore
+        occ_avg.metric("Average Occupancies", df_avg_occs.iloc[0, 0]) # type: ignore
 
         zones = df_zones.iloc[0, 0]
-        total_zones.metric("Total zones", zones)
-        occ_max_norm.metric("Maximum Occupancies (norm.)", f"{df_max_occs.iloc[0, 0] / zones:.3f}")
-        occ_avg_norm.metric("Average Occupancies (norm.)", f"{df_avg_occs.iloc[0, 0] / zones:.3f}")
+        total_zones.metric("Total zones", zones) # type: ignore
+        occ_max_norm.metric("Maximum Occupancies (norm.)", f"{df_max_occs.iloc[0, 0] / zones:.3f}") # pyright: ignore[reportOperatorIssue]
+        occ_avg_norm.metric("Average Occupancies (norm.)", f"{df_avg_occs.iloc[0, 0] / zones:.3f}") # type: ignore
 
-        avg_time_car.metric("Cars", df_time.iloc[0, 1])
-        avg_time_ped.metric("Pedestrians", df_time.iloc[1, 1])
+        avg_time_car.metric("Cars", df_time.iloc[0, 1]) # type: ignore
+        avg_time_ped.metric("Pedestrians", df_time.iloc[1, 1]) # type: ignore
 
-        n_tracked_cars.metric("Cars", df_ntracked.iloc[0, 1])
-        n_tracked_peds.metric("Pedestrians", df_ntracked.iloc[1, 1])
-        n_departures.metric("Departures", df_ndep.iloc[0, 1])
+        n_tracked_cars.metric("Cars", df_ntracked.iloc[0, 1]) # type: ignore
+        n_tracked_peds.metric("Pedestrians", df_ntracked.iloc[1, 1]) # type: ignore
+        n_departures.metric("Departures", df_ndep.iloc[0, 1]) # type: ignore
 def veicoli_fuori(camera):
     try:
         response = requests.get(
