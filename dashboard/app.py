@@ -464,7 +464,7 @@ def display_3d_viewer(zones, single_camera):
     <script>
     window.zonesDataFromPython = {zones_json};
     window.API_BASE = "{API_BASE}";
-    window.SINGLE_CAMERA_MODE = {single_camera};
+    window.SINGLE_CAMERA_MODE = {'true' if single_camera else 'false'};
     </script>
     """
     html_code = html_code.replace("<body>", inject_script + "<body>")
