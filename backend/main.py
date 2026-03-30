@@ -442,6 +442,44 @@ def metrics_report_kpi(camera_id, t_start, t_end):
             .group_by(Detection.class_name)
         )
 
+        # 7. number of departures
+
+        departures_subquery = (
+            db.query(Detection.id,Detection.tracker_id,Detection.event_type,Detection.class_name.label("class_name"))
+            .filter(
+                Detection.camera_id == camera_id,
+                Detection.timestamp > t_start,
+                Detection.timestamp < t_end,
+                Detection.event_type == "departure"
+            ).group_by(Detection.tracker_id,Detection.class_name)
+        )
+
+        n_departures = (
+            db.query(Detection.class_name.label("class_name"),
+                func.count(Detection.id).label("number of departures"))
+            .filter(
+                Detection.camera_id == camera_id,
+                Detection.timestamp > t_start,
+                Detection.timestamp < t_end,
+                Detection.event_type == "departure"
+            )
+            .group_by(Detection.class_name)
+        )
+
+        # 8. number of new detections
+
+        n_newdetect = (
+            db.query(Detection.class_name.label("class_name"),
+                func.count(Detection.id).label("number of new detections"))
+            .filter(
+                Detection.camera_id == camera_id,
+                Detection.timestamp > t_start,
+                Detection.timestamp < t_end,
+                Detection.event_type == "departure"
+            )
+            .group_by(Detection.class_name)
+        )
+
         to_ret = {
             "total_tracked_by_class": pd.DataFrame(total_tracked_by_class_q).to_dict(orient="records"),
             "avg_confidence_by_class": pd.DataFrame(avg_confidence_by_class_q).to_dict(orient="records"),

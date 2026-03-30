@@ -283,11 +283,12 @@ def draw_table(camera):
 def place_a_video(camera):
     uri = camera["uri"]
     cap = cv2.VideoCapture(uri)
+    placeholder = st.empty()
     if not cap.isOpened():
         st.error(f"Could not open stream: {uri}")
-        return
+        return (None,placeholder,[])
 
-    placeholder = st.empty()
+    
     zones = get_zones_to_draw(camera)
     return (cap, placeholder, zones)
 
@@ -328,14 +329,15 @@ def continue_video(cap, placeholder, zones=[]):
         for z in zones
     ]
 
-    while True:
+    while True and not cap is None:
         ret, frame = cap.read()
         if st.session_state.show_zones:
             frame = draw_zones(frame, zones)
         if not ret:
             break
         placeholder.image(frame, channels="BGR")
-    cap.release()
+    if not cap is None:
+        cap.release()
 
 
 @st.fragment(run_every=10)
@@ -359,7 +361,7 @@ def number_of_cars(camera):
         
 
         st.write(
-            f"### Number of parked cars seen by {camera['name']}: {len(unique)}"
+            f"#### Number of parked cars seen by {camera['name']}: {len(unique)}"
         )
 
     except Exception as e:
