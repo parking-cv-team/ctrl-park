@@ -48,12 +48,6 @@ def camera_button():
         response.raise_for_status()
         rows = response.json()
 
-        if "confirmed_camera" not in st.session_state:
-            st.session_state.confirmed_camera = None
-        if "show_zones" not in st.session_state:
-            st.session_state.show_zones = False
-        if "show_tracking_map" not in st.session_state:
-            st.session_state.show_tracking_map = False
 
         option = st.selectbox(
             "## Choose a camera to see related data:", tuple([i["name"] for i in rows])
@@ -204,6 +198,8 @@ def request_report(camera_id, t_i, t_f):
             st.dataframe(pd.DataFrame(r_j['avg_occupations']))
             st.dataframe(pd.DataFrame(r_j['avg_track_time']))
             st.dataframe(pd.DataFrame(r_j['avg_confidence']))
+            #st.dataframe(pd.DataFrame(r_j['n_departures']))
+            #st.dataframe(pd.DataFrame(r_j['n_tracked_det']))
 
         else:
             st.error(f"Could not fetch summary... {r.status_code}")            
@@ -386,6 +382,12 @@ def camera_form():
 
 def body():
     st.title("Ctrl+Park Dashboard")
+    if "confirmed_camera" not in st.session_state:
+            st.session_state.confirmed_camera = None
+    if "show_zones" not in st.session_state:
+        st.session_state.show_zones = False
+    if "show_tracking_map" not in st.session_state:
+        st.session_state.show_tracking_map = False
     camera_form()
     camera_button()
     camera_selected()
