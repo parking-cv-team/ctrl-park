@@ -451,6 +451,7 @@ def display_3d_viewer(zones):
     html_code = open("dashboard/viewer.html", "r").read()
 
     # Inject zones data and API base URL into HTML as JavaScript variables
+    # Not the safe or elegant way, but it works for a demo. For prod, this is how you get random js injections
     zones_json = json.dumps(zones_data)
     inject_script = f"""
     <script>
