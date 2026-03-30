@@ -603,7 +603,7 @@ def mapped_zones(single_camera: bool = False):
         items = [
             {
                 "id": zone.id,
-                "polygon_global_metrics": zone.polygon_metric,
+                "polygon_global_metric": zone.polygon_metric,
             }
             for zone in db.query(Zone).all()
         ]
