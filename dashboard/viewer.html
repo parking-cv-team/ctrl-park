@@ -129,6 +129,26 @@
                 pitchObject.rotation.x = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, pitchObject.rotation.x));
             });
 
+            // Reset movement flags when frame loses focus
+            window.addEventListener("blur", () => {
+                movement.forward = false;
+                movement.backward = false;
+                movement.left = false;
+                movement.right = false;
+                movement.up = false;
+                movement.down = false;
+            });
+
+            // Also reset on mouse leave to catch clicks outside frame
+            document.addEventListener("mouseleave", () => {
+                movement.forward = false;
+                movement.backward = false;
+                movement.left = false;
+                movement.right = false;
+                movement.up = false;
+                movement.down = false;
+            });
+
             function updateFirstPerson(delta) {
                 const direction = new THREE.Vector3();
                 const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(yawObject.quaternion);
