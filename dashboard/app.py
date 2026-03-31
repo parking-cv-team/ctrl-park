@@ -442,7 +442,7 @@ def camera_form():
 
 def display_3d_viewer(zones, single_camera):
     """Load and display the 3D viewer with zone data from database."""
-    st.text("## 3D Parking Lot Viewer")
+    st.write("## 3D Parking Lot Viewer")
 
     # Convert zones to format expected by viewer (polygon -> points)
     zones_data = []
