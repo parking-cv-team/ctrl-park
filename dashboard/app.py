@@ -437,17 +437,16 @@ def camera_form():
         submitted = st.form_submit_button("Register")
         if submitted:
             try:
-                r = requests.post(f"{API_BASE}/camera", json={"name": name, "uri": uri})
-                r.raise_for_status()
-                st.success("Camera registered")
+                
                 st.session_state.camera_name = name
+                pippo = Process(target=run_zone_creator, args=(RTSP_URL,st.session_state.camera_name), daemon=True)
+                pippo.start()
+                pippo.join()
+                st.success("The camera is being registered")
+                
             except Exception as e:
                 st.error(f"Error: {e}")
-    if st.session_state.camera_name is not None:
-        if play_zone_create := st.button("creatuttecose"):
-            pippo = Process(target=run_zone_creator, args=(RTSP_URL,st.session_state.camera_name), daemon=True)
-            pippo.start()
-            pippo.join()
+    
 
 
 def display_3d_viewer(zones, single_camera):

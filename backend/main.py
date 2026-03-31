@@ -1,28 +1,26 @@
 from unittest import result
 
-from fastapi import FastAPI, HTTPException, Response
+from fastapi import FastAPI, HTTPException, Response, Body
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import os
 from dotenv import load_dotenv
 from db import init_db, SessionLocal, CameraSource, Zone, ZoneOccupancy, MappedZone
-import db
-import db
 from db.models import Detection
 from datetime import datetime, timedelta, timezone
 from sqlalchemy import func, distinct, text
 import numpy as np
 from typing import List
-import pathlib as Path
+from pathlib import Path
+from typing import Any, Dict
 import json
 import pandas as pd
 import matplotlib
 import matplotlib.pyplot as plt
 import cv2
 import base64
-import numpy as np
 from scipy.ndimage import gaussian_filter
-
+from flask import request
 matplotlib.use("Agg")
 
 import io
@@ -694,11 +692,12 @@ def get_camera_config(cam_name: str):
     
     configs_dir, _ = get_config_paths()
     path = configs_dir / f"{cam_name}.json"
-    if not path.exists():
+
+    try:
+        with path.open() as f:
+            cfg = json.load(f)
+    except:
         cfg = None
-    with path.open() as f:
-        cfg = json.load(f)
-    
     if cfg is not None:
         initial_params = {
             "rows":          cfg["rows"],
@@ -722,19 +721,38 @@ def get_config_paths():
     output_dir.mkdir(parents=True, exist_ok=True)
     return configs_dir, output_dir
 
+class ConfigData(BaseModel):
+    frame_idx: int
+    rows: int
+    cols: int
+    slot_w: float
+    slot_h: float
+    row_gap: float
+    files_per_row: int
+    control_points_pixel: List[List[float]] # Assuming list of [x, y] coordinates
+    cam_name: str
+
 @app.post("/camera/config/save")
-def save_camera_config(cam_name,data={}):
+def save_camera_config(data: ConfigData):
+    cam_name = data.cam_name
+    data = data.model_dump(exclude="cam_name")
     
     configs_dir, _ = get_config_paths()
     path = configs_dir / f"{cam_name}.json"
     
-    path.write_text(json.dumps(data, indent=2))
+    with open(path, "w") as f:
+        json.dump(data, f, indent=2)
     return 
 
 
+class TopdownData(BaseModel):
+    cam_name: str
+    img: list
+
 @app.post("/camera/topdown/save")
-def save_camera_topdown(cam_name,img):
-    img = np.array(img)
+def save_camera_topdown(data: TopdownData):
+    cam_name = data.cam_name
+    img = np.array(data.img, dtype=np.uint8)
     _, output_dir = get_config_paths()
     
     topdown_path = output_dir / f"{cam_name}_topdown.png"
@@ -742,25 +760,42 @@ def save_camera_topdown(cam_name,img):
     cv2.imwrite(topdown_path,img)
     return
 
-@app.post("/camera/config/zones")
-def save_zones_to_db(uri: str, cam_name: str, frame_w: int, frame_h: int,
-               H: List[List[float]], slots: list, active: dict, params: dict):
-    
-    H = np.array(H)
+
+class ZonesToSaveToDB(BaseModel):
+    uri: str
+    cam_name: str
+    frame_w: int
+    frame_h: int
+    H: list
+    slots: list
+    active: dict
+    params: dict
+
+
+@app.post('/camera/config/zones')
+def save_zones_to_db(data: ZonesToSaveToDB):
+    uri = data.uri
+    cam_name = data.cam_name
+    frame_h = data.frame_h
+    frame_w = data.frame_w    
+    H = np.array(data.H)
+    slots = data.slots
+    active = data.active
+    params = data.params
     db = SessionLocal()
     try:
         camera = db.query(CameraSource).filter(CameraSource.uri == uri).first()
+        print(1)
         if not camera:
             camera = CameraSource(name=cam_name, uri=uri)
             db.add(camera)
             db.flush()
         else:
             camera.name = cam_name
-
+        print(2)
         camera.frame_width  = frame_w
         camera.frame_height = frame_h
         camera.homography   = H.tolist()
-
         db.query(Zone).filter(Zone.camera_id == camera.id).delete(
             synchronize_session=False
         )
@@ -794,7 +829,6 @@ def save_zones_to_db(uri: str, cam_name: str, frame_w: int, frame_h: int,
             if active.get(f"{s['row']}_{s['col']}", False)
             and s.get("polygon_detection_px") is not None
         )
-        print(f"[calibrate_parking] Saved {n_zones} zone(s) to DB for URI: {uri}")
     finally:
         db.close()
 
@@ -820,3 +854,9 @@ def slot_y_origin(file_idx: int, logical_row: int,
                   files_per_row: int) -> float:
                   
     return logical_row * (files_per_row * slot_h + row_gap) + file_idx * slot_h
+
+
+@app.get("/ping")
+def ping(e):
+    print(e)
+    return "ping"
