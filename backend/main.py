@@ -50,10 +50,16 @@ class TrajectoryRequest(BaseModel):
     camera_id: int
     frame: str = None  # base64-encoded PNG
 
+# DB manager to avoid connection leaks
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db 
+    finally:
+        db.close()
 
 @app.post("/camera")
-def create_camera(camera: CameraInput):
-    db = SessionLocal()
+def create_camera(camera: CameraInput, db: Session = Depends(get_db)):
     existing = db.query(CameraSource).filter(CameraSource.uri == camera.uri).first()
     if existing:
         raise HTTPException(status_code=400, detail="Camera already registered")
@@ -61,21 +67,18 @@ def create_camera(camera: CameraInput):
     db.add(source)
     db.commit()
     db.refresh(source)
-    db.close()
     return {"id": source.id, "name": source.name, "uri": source.uri}
 
 
 @app.get("/analytics/recent")
-def recent_analytics(limit=50):
+def recent_analytics(limit=50, db: Session = Depends(get_db)):
     limit = int(limit)
     if not limit:
         raise HTTPException(status_code=400, detail="Limit must be an integer")
     if limit < 1:
         raise HTTPException(status_code=400, detail="Limit must be positive")
 
-    db = SessionLocal()
     items = db.query(Detection).order_by(Detection.timestamp.desc()).limit(limit).all()
-    db.close()
     return [
         {
             "id": it.id,
@@ -87,10 +90,8 @@ def recent_analytics(limit=50):
 
 
 @app.get("/analytics/cameras")
-def cameras():
-    db = SessionLocal()
+def cameras(db: Session = Depends(get_db)):
     items = db.query(CameraSource)
-    db.close()
     return [
         {
             "id": it.id,
@@ -102,9 +103,7 @@ def cameras():
 
 
 @app.get("/analytics/cameras/recent")
-def recent_analytics_number_of_cars(camera_id):
-
-    db = SessionLocal()
+def recent_analytics_number_of_cars(camera_id, db: Session = Depends(get_db)):
 
     items = (
         db.query(Detection.id, Detection.tracker_id, Detection.event_type)
@@ -113,7 +112,6 @@ def recent_analytics_number_of_cars(camera_id):
         .order_by(Detection.id.desc())
     )
 
-    db.close()
     return [
         {"id": it.id, "tracker_id": it.tracker_id, "event_type": it.event_type}
         for it in items
@@ -121,9 +119,7 @@ def recent_analytics_number_of_cars(camera_id):
 
 
 @app.get("/analytics/cameras/recent/outside_zones")
-def recent_analytics_cars_outside_zones(camera_id):
-    db = SessionLocal()
-
+def recent_analytics_cars_outside_zones(camera_id, db: Session = Depends(get_db)):
     items = (
         db.query(
             Detection.id,
@@ -139,7 +135,6 @@ def recent_analytics_cars_outside_zones(camera_id):
         .filter(Detection.class_name != "pedestrian")
         .order_by(Detection.id.desc())
     )
-    db.close()
     return [
         {
             "id": it.id,
@@ -156,9 +151,8 @@ def recent_analytics_cars_outside_zones(camera_id):
 
 
 @app.get("/analytics/zones")
-def cameras(camera_id):
+def cameras(camera_id, db: Session = Depends(get_db)):
 
-    db = SessionLocal()
     items = db.query(Zone).filter(Zone.camera_id == camera_id).all()
     zones = [
         {
@@ -185,15 +179,12 @@ def cameras(camera_id):
         else:
             items.append({"zone": z["name"], "occupancy": "occupied"})
 
-    db.close()
     return items
 
 
 @app.post("/analytics/trajectory_analysis")
-def trajectory_analysis(body: TrajectoryRequest):
-    # TODO: treat edge cases, like no parked cars at all/ no pedestrians at all/ no moving cars at all
+def trajectory_analysis(body: TrajectoryRequest, db: Session = Depends(get_db)):
     camera_id = body.camera_id
-    db = SessionLocal()
 
     rows_cars_parked = (
         db.query(Detection.id, Detection.tracker_id, Detection.cx, Detection.cy)
@@ -367,13 +358,11 @@ def trajectory_analysis(body: TrajectoryRequest):
 
     buf.close()
     plt.close(fig)
-    db.close()
     return Response(content=im_bytes, media_type="image/png")
 
 
 @app.get("/analytics/metrics_report/kpi")
-def metrics_report_kpi(camera_id, t_start, t_end):
-    db = SessionLocal()
+def metrics_report_kpi(camera_id, t_start, t_end, db: Session = Depends(get_db)):
     # 1. total tracked by class
     total_tracked_by_class_q = (
         db.query(
@@ -518,13 +507,11 @@ def metrics_report_kpi(camera_id, t_start, t_end):
         "n_departures": pd.DataFrame(n_departures).to_dict(orient="records"),
         "n_tracked_det": pd.DataFrame(n_tracked_detect).to_dict(orient="records"),
     }
-    db.close()
     return to_ret
 
 
 @app.get("/analytics/metrics_report/timeseries")
-def metrics_report_timeseries(camera_id, t_start, t_end):
-    db = SessionLocal()
+def metrics_report_timeseries(camera_id, t_start, t_end, db: Session = Depends(get_db)):
     confidence_ts = (
         db.query(
             Detection.timestamp.label("t"),
@@ -575,7 +562,6 @@ def metrics_report_timeseries(camera_id, t_start, t_end):
         .group_by(Detection.timestamp)
         .all()
     )
-    db.close()
     return {
         "ts_confidence": pd.DataFrame(confidence_ts).to_dict(orient="records"),
         "ts_objects": pd.DataFrame(tracked_objects_ts).to_dict(orient="records"),
@@ -584,7 +570,7 @@ def metrics_report_timeseries(camera_id, t_start, t_end):
 
 
 @app.get("/analytics/zones/poly")
-def zones_from_cameras(camera_id, limit=50):
+def zones_from_cameras(camera_id, limit=50, db: Session = Depends(get_db)):
     limit = int(limit)
     if not limit:
         raise HTTPException(status_code=400, detail="Limit must be an integer")
@@ -593,14 +579,12 @@ def zones_from_cameras(camera_id, limit=50):
 
     db = SessionLocal()
     items = db.query(Zone).filter(Zone.camera_id == camera_id).limit(limit).all()
-    db.close()
 
     return items
 
 
 @app.get("/mapped_zones/poly")
-def mapped_zones(single_camera: bool = False):
-    db = SessionLocal()
+def mapped_zones(single_camera: bool = False, db: Session = Depends(get_db)):
     if not single_camera:
         items = db.query(MappedZone).all()
     else:
@@ -611,14 +595,12 @@ def mapped_zones(single_camera: bool = False):
             }
             for zone in db.query(Zone).all()
         ]
-    db.close()
 
     return items
 
 
 @app.get("/mapped_zones/status")
-def get_mapped_zones_status(single_camera: bool = False):
-    db = SessionLocal()
+def get_mapped_zones_status(single_camera: bool = False, db: Session = Depends(get_db)):
     if not single_camera:
         all_mapped_zones = db.query(MappedZone).all()
     else:
@@ -631,7 +613,6 @@ def get_mapped_zones_status(single_camera: bool = False):
             )
             for zone in db.query(Zone).all()
         ]
-    db.close()
 
     result = []
     for mapped_zone in all_mapped_zones:
@@ -683,8 +664,6 @@ def get_mapped_zones_status(single_camera: bool = False):
                     "is_occupied": is_occupied,
                 }
             )
-
-    db.close()
     return result
 
 @app.get("/camera/config")
@@ -773,7 +752,7 @@ class ZonesToSaveToDB(BaseModel):
 
 
 @app.post('/camera/config/zones')
-def save_zones_to_db(data: ZonesToSaveToDB):
+def save_zones_to_db(data: ZonesToSaveToDB, db: Session = Depends(get_db)):
     uri = data.uri
     cam_name = data.cam_name
     frame_h = data.frame_h
@@ -782,7 +761,6 @@ def save_zones_to_db(data: ZonesToSaveToDB):
     slots = data.slots
     active = data.active
     params = data.params
-    db = SessionLocal()
     try:
         camera = db.query(CameraSource).filter(CameraSource.uri == uri).first()
         print(1)
@@ -829,8 +807,6 @@ def save_zones_to_db(data: ZonesToSaveToDB):
             if active.get(f"{s['row']}_{s['col']}", False)
             and s.get("polygon_detection_px") is not None
         )
-    finally:
-        db.close()
 
 
 def slot_metric_polygon(row: int, col: int,

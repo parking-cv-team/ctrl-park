@@ -16,7 +16,7 @@ import time
 from multiprocessing import Process
 from video_player import run_opencv_window as run_rstp_feed
 from dashboard.calbrate_camera import run_zone_creator
-
+import matplotlib.dates as mdates
 
 # current dashboard structure:
 #
@@ -110,9 +110,9 @@ def camera_selected():
         with cols[0]:
             # setto il tempo iniziale a 24 ore prima
             default_dt = datetime.now() - timedelta(days=1)
-            ti = st.datetime_input("Time Start", value=default_dt)
+            ti = st.datetime_input("Time Start", value=default_dt, key='ti', step = 60)
         with cols[1]:
-            tf = st.datetime_input("Time End")
+            tf = st.datetime_input("Time End", key = 'tf', step=60)
 
         request_report(camera["id"], ti, tf)
 
@@ -121,6 +121,13 @@ def camera_selected():
     else:
         st.info("Please select an option and click the button.")
 
+
+# helper function to display metric safely in case of exceptions
+def safe_metric(widget, label, value_fn):
+    try:
+        widget.metric(label, value_fn())
+    except:
+        widget.metric(label, "N/A")
 
 @st.fragment(run_every=5)  # start with 1-5 seconds, not 0.1
 def request_kpis_live(camera_id):
@@ -170,36 +177,29 @@ def request_kpis_live(camera_id):
         df_ndep = pd.DataFrame(r_j["n_departures"])
         df_ntracked = pd.DataFrame(r_j["n_tracked_det"])
 
-        total_car.metric(
-            "Cars", df_total_tracked.iloc[0, 1]
-        )  # pyright: ignore[reportArgumentType]
-        total_ped.metric(
-            "Pedestrians", df_total_tracked.iloc[1, 1]
-        )  # pyright: ignore[reportArgumentType]
-        total.metric("Both", df_total_tracked.iloc[0, 1] + df_total_tracked.iloc[1, 1])  # type: ignore
+        safe_metric(total_car, "Cars", lambda: df_total_tracked.iloc[0, 1])  # pyright: ignore[reportArgumentType]
+        safe_metric(total_ped, "Pedestrians", lambda: df_total_tracked.iloc[1, 1])  # pyright: ignore[reportArgumentType]
+        safe_metric(total, "Both", lambda: df_total_tracked.iloc[0, 1] + df_total_tracked.iloc[1, 1])  # type: ignore
 
-        conf_car.metric("Cars", f"{df_avg_conf.iloc[0, 1]:.3f}")
-        conf_ped.metric("Pedestrians", f"{df_avg_conf.iloc[1, 1]:.3f}")
-        conf_avg.metric("Average", f"{(df_avg_conf.iloc[0, 1] + df_avg_conf.iloc[1, 1]) * 0.5:.3f}")  # type: ignore
+        safe_metric(conf_car, "Cars", lambda: f"{df_avg_conf.iloc[0, 1]:.3f}")
+        safe_metric(conf_ped, "Pedestrians", lambda: f"{df_avg_conf.iloc[1, 1]:.3f}")
+        safe_metric(conf_avg, "Average", lambda: f"{(df_avg_conf.iloc[0, 1] + df_avg_conf.iloc[1, 1]) * 0.5:.3f}")  # type: ignore
 
-        occ_max.metric("Maximum Occupancies", df_max_occs.iloc[0, 0])  # type: ignore
-        occ_avg.metric("Average Occupancies", df_avg_occs.iloc[0, 0])  # type: ignore
+        safe_metric(occ_max, "Maximum Occupancies", lambda: df_max_occs.iloc[0, 0])  # type: ignore
+        safe_metric(occ_avg, "Average Occupancies", lambda: df_avg_occs.iloc[0, 0])  # type: ignore
 
-        zones = df_zones.iloc[0, 0]
-        total_zones.metric("Total zones", zones)  # type: ignore
-        occ_max_norm.metric(
-            "Maximum Occupancies (norm.)", f"{df_max_occs.iloc[0, 0] / zones:.3f}"
-        )  # pyright: ignore[reportOperatorIssue]
-        occ_avg_norm.metric("Average Occupancies (norm.)", f"{df_avg_occs.iloc[0, 0] / zones:.3f}")  # type: ignore
+        safe_metric(total_zones, "Total zones", lambda: df_zones.iloc[0, 0])  # type: ignore
+        safe_metric(occ_max_norm, "Maximum Occupancies (norm.)", lambda: f"{df_max_occs.iloc[0, 0] / df_zones.iloc[0, 0]:.3f}")  # pyright: ignore[reportOperatorIssue]
+        safe_metric(occ_avg_norm, "Average Occupancies (norm.)", lambda: f"{df_avg_occs.iloc[0, 0] / df_zones.iloc[0, 0]:.3f}")  # type: ignore
 
-        avg_time_car.metric("Cars", df_time.iloc[0, 1])  # type: ignore
-        avg_time_ped.metric("Pedestrians", df_time.iloc[1, 1])  # type: ignore
+        safe_metric(avg_time_car, "Cars", lambda: df_time.iloc[0, 1])  # type: ignore
+        safe_metric(avg_time_ped, "Pedestrians", lambda: df_time.iloc[1, 1])  # type: ignore
 
-        n_tracked_cars.metric("Cars", df_ntracked.iloc[0, 1])  # type: ignore
-        n_tracked_peds.metric("Pedestrians", df_ntracked.iloc[1, 1])  # type: ignore
-        n_departures.metric("Departures", df_ndep.iloc[0, 1])  # type: ignore
+        safe_metric(n_tracked_cars, "Cars", lambda: df_ntracked.iloc[0, 1])  # type: ignore
+        safe_metric(n_tracked_peds, "Pedestrians", lambda: df_ntracked.iloc[1, 1])  # type: ignore
+        safe_metric(n_departures, "Departures", lambda: df_ndep.iloc[0, 1])  # type: ignore
 
-
+    
 def veicoli_fuori(camera):
     try:
         response = requests.get(
@@ -323,36 +323,44 @@ def request_timeseries(camera_id, t_i, t_f):
             axes[2].set_title("Number of parked vehicles")
 
             sns.lineplot(
-                data=ts_1.reset_index(),
+                data=ts_1,
                 ax=axes[0],
-                x=ts_1.index,
+                x="t",
                 y="avg_confidence",
                 hue="class_name",
                 palette="Set1",
             )
+
             sns.lineplot(
-                data=ts_2.reset_index(),
+                data=ts_2,
                 ax=axes[1],
-                x=ts_2.index,
+                x="t",
                 y="num_tracked",
                 hue="class_name",
                 palette="Set1",
             )
+
             sns.lineplot(
-                data=ts_3.reset_index(),
+                data=ts_3,
                 ax=axes[2],
-                x=ts_3.index,
+                x="t",
                 y="num_parked_vehicles",
                 palette="Set1",
             )
 
+            for ax in axes:
+                ax.yaxis.grid()
+
+            locator = mdates.AutoDateLocator(minticks=4, maxticks=16)
+            formatter = mdates.ConciseDateFormatter(locator)
+
+            axes[2].xaxis.set_major_locator(locator)
+            axes[2].xaxis.set_major_formatter(formatter)
+
             axes[1].yaxis.set_major_locator(ticker.MaxNLocator(integer=True))
             axes[2].yaxis.set_major_locator(ticker.MaxNLocator(integer=True))
 
-            axes[0].yaxis.grid()
-            axes[1].yaxis.grid()
-            axes[2].yaxis.grid()
-
+            fig.autofmt_xdate(rotation=30, ha="right")
             fig.tight_layout()
 
             st.pyplot(fig)
@@ -414,7 +422,7 @@ def number_of_cars(camera):
 
         for x in data:
             if x["event_type"] == "departure":
-                seen.add(x)
+                seen.add(x['tracker_id'])
             if x["tracker_id"] in seen:
                 continue
             unique.append(x)
