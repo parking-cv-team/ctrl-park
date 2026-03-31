@@ -15,6 +15,8 @@ import numpy as np
 import time
 from multiprocessing import Process
 from video_player import run_opencv_window as run_rstp_feed
+from dashboard.calbrate_camera import run_zone_creator
+
 
 # current dashboard structure:
 #
@@ -427,17 +429,24 @@ def number_of_cars(camera):
 
 def camera_form():
     st.write("## Add Camera Source")
+    if "camera_name" not in st.session_state:
+        st.session_state.camera_name = None
     with st.form("camera-form"):
         name = st.text_input("Camera name")
         uri = st.text_input("Camera URI")
         submitted = st.form_submit_button("Register")
         if submitted:
             try:
-                r = requests.post(f"{API_BASE}/camera", json={"name": name, "uri": uri})
-                r.raise_for_status()
-                st.success("Camera registered")
+                
+                st.session_state.camera_name = name
+                pippo = Process(target=run_zone_creator, args=(RTSP_URL,st.session_state.camera_name), daemon=True)
+                pippo.start()
+                pippo.join()
+                st.success("The camera is being registered")
+                
             except Exception as e:
                 st.error(f"Error: {e}")
+    
 
 
 def display_3d_viewer(zones, single_camera):
