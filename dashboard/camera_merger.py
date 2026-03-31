@@ -790,7 +790,7 @@ def save_merge(step_results,selected_ids): #TODO
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
-def main(recalibrate = False):
+def merge_cameras(recalibrate = False):
     
 
 
