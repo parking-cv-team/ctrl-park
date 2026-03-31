@@ -1,0 +1,32 @@
+The following are direct outputs of the "benchmark_models.ipynb"
+
+BASELINE:
+
+- on pedestrians (people) dataset:
+
+Class     Images  Instances      Box(P          R      mAP50  mAP50-95):
+all        412        744      0.809       0.76      0.838      0.568
+person        412        744      0.809       0.76      0.838      0.568
+
+- on cars dataset: 
+
+Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 
+all        349       4278      0.005      0.192    0.00496    0.00311
+person        348       4213          0          0    0.00256   0.000933
+
+car         55         65       0.01      0.385    0.00735    0.00529
+FINETUNEDs:
+
+- pedestrians:
+
+Class     Images  Instances      Box(P          R      mAP50  mAP50-95):
+all        412        744      0.921      0.853      0.928      0.688
+
+-cars:
+
+Class     Images  Instances      Box(P          R      mAP50  mAP50-95):
+all        349       4278      0.689      0.696      0.694      0.511
+car        348       4213       0.79      0.931       0.94      0.679
+van         55         65      0.588       0.46      0.448      0.342
+
+For reproduction see the .ipynb file for validation
