@@ -1,4 +1,5 @@
 import os
+import cv2
 from queue import Queue
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple, cast
@@ -16,7 +17,7 @@ DEFAULT_FRAME_RATE = int(os.getenv("FRAME_RATE", "25"))
 LOST_TRACK_BUFFER = int(os.getenv("LOST_TRACK_BUFFER", "30"))
 MIN_SAVE_INTERVAL = float(os.getenv("MIN_DETECTION_SAVE_INTERVAL", "1.0"))
 BBOX_MOVEMENT_THRESHOLD = int(os.getenv("BBOX_MOVEMENT_THRESHOLD", "5"))
-OCCUPANCY_TRANSITION_BUFFER = int(os.getenv("OCCUPANCY_TRANSITION_BUFFER_MINUTES", "2")) * 60
+OCCUPANCY_TRANSITION_BUFFER = float(os.getenv("OCCUPANCY_TRANSITION_BUFFER", "2"))
 OCCUPANT_ABSENCE_THRESHOLD = int(os.getenv("OCCUPANT_ABSENCE_THRESHOLD_SECONDS", "120"))
 OLD_DETECTION_CUTOFF = int(os.getenv("OLD_DETECTION_CUTOFF_SECONDS", "10"))
 
@@ -30,6 +31,17 @@ def _build_zone_polygons(zones: List[Zone]) -> List[Tuple[Zone, sv.PolygonZone]]
     """Convert zones to polygon structures."""
     return [(z, sv.PolygonZone(polygon=np.array(z.polygon, dtype=np.int64))) for z in zones]
 
+def _poly_iou(x1: float, y1: float, x2: float, y2: float,
+              zone_polygon: np.ndarray) -> float:
+    """IoU between an axis-aligned bbox rectangle and a convex zone polygon."""
+    bbox_poly = np.array([[x1, y1], [x2, y1], [x2, y2], [x1, y2]], dtype=np.float32)
+    zone_poly  = zone_polygon.astype(np.float32)
+    _, inter   = cv2.intersectConvexConvex(bbox_poly, zone_poly)
+    inter_area = cv2.contourArea(inter) if inter is not None and len(inter) > 0 else 0.0
+    bbox_area  = (x2 - x1) * (y2 - y1)
+    zone_area  = cv2.contourArea(zone_poly)
+    union_area = bbox_area + zone_area - inter_area
+    return inter_area / union_area if union_area > 0 else 0.0
 
 def _get_zone_ids(detections: sv.Detections, zone_polygons: List[Tuple[Zone, sv.PolygonZone]]) -> List[Optional[int]]:
     """Get zone IDs for each detection."""
@@ -59,19 +71,120 @@ def _detection_passes_filters(
     
     prev = detection_tracker[key]
     
-    # Filter: less than minimum interval
-    if (timestamp - prev["timestamp"]) < MIN_SAVE_INTERVAL:
-        return False
-    
-    # Filter: bbox hasn't moved enough
-    if not (abs(prev["x1"] - x1) > BBOX_MOVEMENT_THRESHOLD or
-            abs(prev["y1"] - y1) > BBOX_MOVEMENT_THRESHOLD or
-            abs(prev["x2"] - x2) > BBOX_MOVEMENT_THRESHOLD or
-            abs(prev["y2"] - y2) > BBOX_MOVEMENT_THRESHOLD):
-        return False
-    
-    detection_tracker[key] = {"timestamp": timestamp, "x1": x1, "y1": y1, "x2": x2, "y2": y2}
-    return True
+def _get_zone_ids(
+    detections: sv.Detections,
+    zone_polygons: List[Tuple[Zone, sv.PolygonZone]],
+    source: CameraSource,
+) -> List[Optional[int]]:
+    """Assign each detection to a zone using multi-signal scoring.
+
+    Algorithm (in priority order):
+
+    1. Pre-filter: drop zones with pixel-space IoU(bbox, zone) < 10%.
+       If nothing survives → None.
+
+    2. Ground-contact test: project bbox bottom-centre (cx, y2) to metric
+       space via H_world = inv(H_parking). If exactly one candidate zone's
+       polygon_metric contains the projected point → return that zone
+       immediately (fast path, most common case).
+
+    3. Scoring fallback (ambiguous or degenerate projection):
+         score = 0.50 * ground_proximity   # 1.0 inside, 1/(1+dist) outside
+               + 0.25 * iou * confidence   # penalise low-confidence boxes
+               + 0.15 * (zone_y_max / H)   # depth: lower in image = nearer
+               + 0.10 * confidence
+       Return highest-scoring zone, or None if best score < 0.15.
+
+    4. Sanity check: if projected point is > 60 m from origin, the
+       homography is degenerate for this pixel — fall through to step 3
+       without the ground-contact signal.
+    """
+    if len(detections) == 0:
+        return []
+
+    # Pre-compute H_world once for this batch
+    H_world = None
+    if source.homography is not None:
+        H = np.array(source.homography, dtype=np.float64)
+        try:
+            H_world = np.linalg.inv(H)
+        except np.linalg.LinAlgError:
+            pass
+
+    frame_h = float(source.frame_height or 1080)
+    result: List[Optional[int]] = [None] * len(detections)
+
+    for i in range(len(detections)):
+        x1, y1, x2, y2 = detections.xyxy[i]
+        confidence = float(detections.confidence[i]) if detections.confidence is not None else 1.0
+        cx = (x1 + x2) / 2.0
+
+        # ── Ground contact point in metric space ─────────────────────────
+        pt_metric: Optional[Tuple[float, float]] = None
+        degenerate = False
+        if H_world is not None:
+            p = H_world @ np.array([cx, float(y2), 1.0])
+            if abs(p[2]) > 1e-9:
+                p = p / p[2]
+                if np.linalg.norm(p[:2]) <= 60.0:
+                    pt_metric = (float(p[0]), float(p[1]))
+                else:
+                    degenerate = True  # sanity check failed
+
+        # ── Step 1: pre-filter by IoU ─────────────────────────────────────
+        candidates: List[Tuple[Zone, float]] = []
+        for zone_db, _ in zone_polygons:
+            zone_px = np.array(zone_db.polygon, dtype=np.float32)
+            iou = _poly_iou(x1, y1, x2, y2, zone_px)
+            if iou >= 0.10:
+                candidates.append((zone_db, iou))
+
+        if not candidates:
+            continue  # result[i] stays None
+
+        # ── Step 2: unambiguous ground-contact match ──────────────────────
+        if pt_metric is not None and not degenerate:
+            matches = [
+                zd for zd, _ in candidates
+                if zd.polygon_metric is not None
+                and cv2.pointPolygonTest(
+                    np.array(zd.polygon_metric, dtype=np.float32),
+                    pt_metric, False,
+                ) >= 0
+            ]
+            if len(matches) == 1:
+                result[i] = matches[0].id
+                continue
+
+        # ── Step 3: scoring fallback ──────────────────────────────────────
+        best_id: Optional[int] = None
+        best_score = 0.15  # minimum acceptance threshold
+
+        for zone_db, iou in candidates:
+            # Ground proximity
+            if pt_metric is not None and not degenerate and zone_db.polygon_metric is not None:
+                poly_m  = np.array(zone_db.polygon_metric, dtype=np.float32)
+                signed  = cv2.pointPolygonTest(poly_m, pt_metric, True)
+                ground_prox = 1.0 if signed >= 0 else 1.0 / (1.0 + abs(signed))
+            else:
+                ground_prox = 0.5  # neutral when metric data unavailable
+
+            # Depth: higher pixel y → closer to camera
+            zone_px  = np.array(zone_db.polygon, dtype=np.float32)
+            y_prox   = float(zone_px[:, 1].max()) / frame_h
+
+            score = (0.50 * ground_prox
+                   + 0.25 * iou * confidence
+                   + 0.15 * y_prox
+                   + 0.10 * confidence)
+
+            if score > best_score:
+                best_score = score
+                best_id = zone_db.id
+
+        result[i] = best_id
+
+    return result
 
 
 def _persist_detections(
@@ -82,7 +195,7 @@ def _persist_detections(
     if len(tracked) == 0:
         return
     
-    det_zone_ids = _get_zone_ids(tracked, zone_polygons)
+    det_zone_ids = _get_zone_ids(tracked, zone_polygons, source)
     dt = datetime.utcfromtimestamp(timestamp)
     detections_to_add = {}
     
