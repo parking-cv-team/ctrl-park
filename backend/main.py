@@ -22,6 +22,8 @@ import base64
 from scipy.ndimage import gaussian_filter
 from fastapi import Depends
 
+from flask import request
+from processing.merge_cameras import estimate_transforms,compute_global_transforms,ensure_topdown,save_merged_topdown,save_merge_to_db
 matplotlib.use("Agg")
 
 import io
@@ -768,14 +770,12 @@ def save_zones_to_db(data: ZonesToSaveToDB, db: Session = Depends(get_db)):
     params = data.params
     try:
         camera = db.query(CameraSource).filter(CameraSource.uri == uri).first()
-        print(1)
         if not camera:
             camera = CameraSource(name=cam_name, uri=uri)
             db.add(camera)
             db.flush()
         else:
             camera.name = cam_name
-        print(2)
         camera.frame_width  = frame_w
         camera.frame_height = frame_h
         camera.homography   = H.tolist()
@@ -843,3 +843,112 @@ def slot_y_origin(file_idx: int, logical_row: int,
 def ping(e):
     print(e)
     return "ping"
+
+
+@app.get("/camera/selected_data")
+def get_selected_Camera_data(selected_ids):
+
+    configs_dir, _ = get_config_paths()
+    db = SessionLocal()
+    try:
+        q = (
+            db.query(CameraSource)
+            .filter(CameraSource.homography.isnot(None))
+            .order_by(CameraSource.id)
+        )
+        if selected_ids is not None:
+            q = q.filter(CameraSource.id.in_(selected_ids))
+        cameras = q.all()
+        if not cameras:
+            return None
+
+        cam_data_list = []
+        for camera in cameras:
+            cam_name = camera.name
+            zones = (
+                db.query(Zone)
+                .filter(
+                    Zone.camera_id == camera.id,
+                    Zone.polygon_metric.isnot(None),
+                )
+                .all()
+            )
+            if not zones:
+                print(f"[WARN] Camera '{cam_name}' has no zones with polygon_metric — skipping.")
+                continue
+
+            # Read frame_idx from config file (default 0)
+            config_path = configs_dir / f"{cam_name}.json"
+            frame_idx = 0
+            if config_path.exists():
+                with config_path.open() as f:
+                    cfg_file = json.load(f)
+                frame_idx = cfg_file.get("frame_idx", 0)
+
+            # Extract representative frame for visualization
+            frame = extract_frame(camera.uri, frame_idx)
+            if frame is None:
+                print(f"[WARN] Cannot read frame from {camera.uri}; using blank.")
+                frame = np.zeros((480, 640, 3), np.uint8)
+
+            # Build slot list
+            slots = []
+            for zone in zones:
+                try:
+                    row, col = map(int, zone.name.split("_"))
+                except ValueError:
+                    print(f"[WARN] Cannot parse row/col from zone name '{zone.name}' — skipping.")
+                    continue
+                poly_metric = np.array(zone.polygon_metric, dtype=float)
+                centroid = poly_metric.mean(axis=0).tolist()
+                slots.append({
+                    "key": zone.name,
+                    "row": row,
+                    "col": col,
+                    "polygon_detection_px": zone.polygon,
+                    "polygon_metric": zone.polygon_metric,
+                    "metric_centroid": centroid,
+                    "zone_id": zone.id,
+                })
+
+            cam_data_list.append({
+                "cam_idx": len(cam_data_list),
+                "camera_id": camera.id,
+                "uri": camera.uri,
+                "cam_name": cam_name,
+                "slots": slots,
+            })
+
+        return cam_data_list
+    finally:
+        db.close()
+
+
+@app.post("/merge/save")
+def save_merge(step_results,selected_ids): #TODO
+    _,output_dir = get_config_paths()
+    topdown_path= output_dir / "merged_topdown.png"
+    cam_data_list = get_selected_Camera_data(selected_ids)
+    n = len(cam_data_list)
+    # ------------------------------------------------------------------
+    # Estimate transforms
+    # ------------------------------------------------------------------
+    print("\n[merge_cameras] Estimating transforms…")
+    estimate_transforms(step_results, cam_data_list)
+    global_transforms = compute_global_transforms(n, step_results)
+
+    # ------------------------------------------------------------------
+    # Ensure per-camera top-downs exist
+    # ------------------------------------------------------------------
+    for cam_data, M in zip(cam_data_list, global_transforms):
+        ensure_topdown(output_dir, cam_data, [M])
+
+    # ------------------------------------------------------------------
+    # Save merged top-down PNG
+    # ------------------------------------------------------------------
+    save_merged_topdown(topdown_path, cam_data_list, global_transforms)
+
+    # ------------------------------------------------------------------
+    # Save merge results to DB
+    # ------------------------------------------------------------------
+    save_merge_to_db(step_results, cam_data_list, global_transforms)

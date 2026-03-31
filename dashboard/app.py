@@ -17,6 +17,8 @@ from multiprocessing import Process
 from dashboard.calbrate_camera import run_zone_creator
 import matplotlib.dates as mdates
 import subprocess
+from dashboard.sel_cam import select_cameras
+
 
 # current dashboard structure:
 #
