@@ -51,8 +51,10 @@ def camera_button():
         response.raise_for_status()
         rows = response.json()
 
+        st.markdown("## Camera Choice")
+        st.markdown("In this part you will be able to choose a camera and get its relative analytics")
         option = st.selectbox(
-            "## Choose a camera to see related data:", tuple([i["name"] for i in rows])
+            label="Choose a camera to see related data", options=tuple([i["name"] for i in rows])
         )
 
         if st.button("Confirm Selection"):
@@ -95,17 +97,19 @@ def camera_selected():
             request_kpis_live(camera["id"])
 
         if st.session_state.show_tracking_map:
-            st.markdown("## Tracking Plots and Heatmaps")
-            request_tracking_plots(camera["id"])
+            st.markdown("### Tracking Plots and Heatmaps")
+            request_tracking_plots(camera)
 
         # tabella occupazioni
-        draw_table(camera)
+        with st.empty():
+            draw_table(camera)
 
         # veicoli fuori
-        veicoli_fuori(camera)
+        with st.empty():
+            veicoli_fuori(camera)
 
         # create button to create main metrics report (KPI, time series blablabla)
-        st.markdown("## Metrics Report and Time Series")
+        st.markdown("### Metrics Report and Time Series")
         cols = st.columns(2)
         with cols[0]:
             # setto il tempo iniziale a 24 ore prima
@@ -114,9 +118,11 @@ def camera_selected():
         with cols[1]:
             tf = st.datetime_input("Time End", key = 'tf', step=60)
 
-        request_report(camera["id"], ti, tf)
+        with st.empty():
+            request_report(camera["id"], ti, tf)
 
-        request_timeseries(camera["id"], ti, tf)
+        with st.empty():
+            request_timeseries(camera["id"], ti, tf)
 
     else:
         st.info("Please select an option and click the button.")
@@ -219,10 +225,13 @@ def veicoli_fuori(camera):
             unique.append(x)
             seen.add(x["tracker_id"])
 
+        s = ""
         for x in unique:
-            st.write(
-                f"Found {x['class']} outside zones at x:{x['cx']} y:{x['cy']} with tracking id: {x['tracker_id']} at timestamp: {x['time']}"
+            s += (
+                f"**Found {x['class']} outside zones at** x:{x['cx']} y:{x['cy']} with tracking id: {x['tracker_id']} at timestamp: {x['time']}\n"
             )
+
+        st.markdown(s)
 
     except Exception as e:
         st.error(f"Could not get cars outside parking zones: {e}")
@@ -230,10 +239,10 @@ def veicoli_fuori(camera):
 
 
 # logic to make API request and display the plot
-def request_tracking_plots(camera_id):
+def request_tracking_plots(camera):
     # if st.button("Show tracking map"):
-    frame = get_first_frame()
-    payload = {"camera_id": camera_id}
+    frame = get_first_frame(camera['uri'])
+    payload = {"camera_id": camera['id']}
     if frame is not None:
         _, buf = cv2.imencode(".png", frame)
         payload["frame"] = base64.b64encode(buf).decode("utf-8")  # type: ignore
@@ -246,10 +255,10 @@ def request_tracking_plots(camera_id):
 
 
 # get first frame of RTSP stream
-def get_first_frame():
+def get_first_frame(camera_uri):
     # this should be the logic to obtain the first frame of a RTSP stream, to check if it actually works
     # if it doesn't, replace with a working logic and uhhhhhhh
-    cap = cv2.VideoCapture(RTSP_URL)
+    cap = cv2.VideoCapture(camera_uri)
     if not cap.isOpened():
         return None
 
@@ -441,6 +450,7 @@ def number_of_cars(camera):
 
 def camera_form():
     st.write("## Add Camera Source")
+    st.markdown("In this part you will register your camera source in the database and followingly let the pipeline process run. The source can be either a path to a .mp4 file or a RTSP stream link.")
     if "camera_name" not in st.session_state:
         st.session_state.camera_name = None
     with st.form("camera-form"):
@@ -464,6 +474,7 @@ def camera_form():
 def display_3d_viewer(zones, single_camera):
     """Load and display the 3D viewer with zone data from database."""
     st.write("## 3D Parking Lot Viewer")
+    st.markdown("In this part you will be able to interact with a 3D simulation of the parking lots")
 
     # Convert zones to format expected by viewer (polygon -> points)
     zones_data = []
@@ -509,6 +520,8 @@ def get_mapped_zones(single_camera=False):
 
 def body():
     st.title("Ctrl+Park Dashboard")
+    st.markdown("Welcome to your dashboard")
+    st.markdown("---")
     if "confirmed_camera" not in st.session_state:
         st.session_state.confirmed_camera = None
     if "show_zones" not in st.session_state:
@@ -518,6 +531,9 @@ def body():
     camera_form()
     camera_button()
     camera_selected()
+
+    # 3d map logic
+    st.markdown("---")
     mapped_zones = get_mapped_zones()
     singlecamera = False
     if not mapped_zones:
