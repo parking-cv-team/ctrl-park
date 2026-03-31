@@ -472,6 +472,7 @@ def camera_form():
     with st.form("camera-form"):
         name = st.text_input("Camera name")
         uri = st.text_input("Camera URI")
+        
         submitted = st.form_submit_button("Register")
         if submitted:
             try:
@@ -534,6 +535,14 @@ def get_mapped_zones(single_camera=False):
         return None
 
 
+def merge():
+    st.markdown("## Merge Parking lots")
+    st.markdown("Press the button below to merge the designed parking lots so far")
+
+    if st.button(label="Merge...", type="primary"):
+        pass # TODO: IMPLEMENT MERGING LOGIC
+
+
 def body():
     st.title("Ctrl+Park Dashboard")
     st.markdown("Welcome to your dashboard")
@@ -545,6 +554,9 @@ def body():
     if "show_tracking_map" not in st.session_state:
         st.session_state.show_tracking_map = False
     camera_form()
+
+    merge()
+
     camera_button()
 
     camera_selected()
