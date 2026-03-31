@@ -41,8 +41,7 @@ PANEL_W       = 340         # width of the side parameter panel (pixels)
 PANEL_BG      = (45, 45, 45)
 
 API_BASE = os.getenv("API_BASE_URL", "http://localhost:8000")
-
-
+RTSP_URL = "rtsp://localhost:8554/live.stream"
 
 # ---------------------------------------------------------------------------
 # Frame extraction
@@ -978,10 +977,11 @@ def ping(e):
     except:
         pass
 
+
 # ---------------------------------------------------------------------------
 # Main / CLI
 # ---------------------------------------------------------------------------
-def run_zone_creator(uri: str,cam_name: str):
+def run_zone_creator(cam_name: str,uri = RTSP_URL):
     
     if uri == None:
         st.error(f"[calibration]: not None uri needed")

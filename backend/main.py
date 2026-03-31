@@ -848,7 +848,6 @@ def ping(e):
 @app.get("/camera/selected_data")
 def get_selected_Camera_data(selected_ids):
 
-    configs_dir, _ = get_config_paths()
     db = SessionLocal()
     try:
         q = (
@@ -877,20 +876,7 @@ def get_selected_Camera_data(selected_ids):
                 print(f"[WARN] Camera '{cam_name}' has no zones with polygon_metric — skipping.")
                 continue
 
-            # Read frame_idx from config file (default 0)
-            config_path = configs_dir / f"{cam_name}.json"
-            frame_idx = 0
-            if config_path.exists():
-                with config_path.open() as f:
-                    cfg_file = json.load(f)
-                frame_idx = cfg_file.get("frame_idx", 0)
-
-            # Extract representative frame for visualization
-            frame = extract_frame(camera.uri, frame_idx)
-            if frame is None:
-                print(f"[WARN] Cannot read frame from {camera.uri}; using blank.")
-                frame = np.zeros((480, 640, 3), np.uint8)
-
+            
             # Build slot list
             slots = []
             for zone in zones:
@@ -899,7 +885,7 @@ def get_selected_Camera_data(selected_ids):
                 except ValueError:
                     print(f"[WARN] Cannot parse row/col from zone name '{zone.name}' — skipping.")
                     continue
-                poly_metric = np.array(zone.polygon_metric, dtype=float)
+                poly_metric = np.array(zone.polygon_metric, dtype=float).tolist()
                 centroid = poly_metric.mean(axis=0).tolist()
                 slots.append({
                     "key": zone.name,
@@ -924,12 +910,28 @@ def get_selected_Camera_data(selected_ids):
         db.close()
 
 
+
+class MergeSaveData(BaseModel):
+    step_results: list
+    selected_ids: list
+    
+
 @app.post("/merge/save")
-def save_merge(step_results,selected_ids): #TODO
+def save_merge(data: MergeSaveData):
+    
+    selected_ids = data.selected_ids
+    step_results = data.step_results
     _,output_dir = get_config_paths()
     topdown_path= output_dir / "merged_topdown.png"
     cam_data_list = get_selected_Camera_data(selected_ids)
     n = len(cam_data_list)
+
+    if n == 1:
+        print("[merge_cameras] Only one camera — generating single-cam top-down.")
+        M_id = np.array([[1., 0., 0.], [0., 1., 0.]])
+        save_merged_topdown(topdown_path, cam_data_list, [M_id])
+        return
+
     # ------------------------------------------------------------------
     # Estimate transforms
     # ------------------------------------------------------------------

@@ -72,13 +72,16 @@ def apply_affine_pts(M2x3, pts):
 # ---------------------------------------------------------------------------
 # Frame extraction
 # ---------------------------------------------------------------------------
-def extract_frame(uri: str, frame_idx: int) -> np.ndarray | None:
+def extract_frame(uri: str) -> np.ndarray | None:
     # Run VideoCapture in a subprocess to isolate GStreamer/codec segfaults.
     # Protocol: first 12 bytes = "H W C\n" (shape), then raw pixel bytes.
     script = (
         "import cv2, sys; "
         f"cap = cv2.VideoCapture({repr(uri)}); "
-        f"cap.set(cv2.CAP_PROP_POS_FRAMES, {frame_idx}); "
+        "if cap is None:"
+        "   return None"
+        "for _ in range(30):"
+        "   ok,f=cap.read()"
         "ok, f = cap.read() if cap.isOpened() else (False, None); "
         "cap.release(); "
         "sys.stdout.buffer.write(f'{f.shape[0]} {f.shape[1]} {f.shape[2]}\\n'.encode() + f.tobytes()) "
@@ -107,11 +110,22 @@ def load_cameras_from_db(selected_ids: list | None = None) -> list: #TODO
     If selected_ids is provided, only those camera IDs are loaded.
     """
     try:
-        r = requests.get(f"{API_BASE}/camera/selected_data", json=selected_ids)
+        r = requests.get(f"{API_BASE}/camera/selected_data", params={"selected_ids":selected_ids})
         r.raise_for_status()
         rows = r.json()
+        cam_data =[]
         for i in rows:
-            pass
+            slots = i.slots
+            for i in range(len(slots)):
+                slots[i]["polygon_metric"] = np.array(slots[i]["polygon_metric"],dtype=float)
+            cam_data.append({
+                "cam_idx": i.cam_idx,
+                "camera_id": i.camera_id,
+                "uri": i.uri,
+                "cam_name": i.cam_name,
+                "slots": slots,
+            })
+        return cam_data
     except Exception as e:
         ping(e)
     pass
@@ -758,419 +772,17 @@ class MergeUI:
         return self.step_results
 
 
-# ---------------------------------------------------------------------------
-# Transform estimation
-# ---------------------------------------------------------------------------
-def estimate_transforms(step_results: list, cam_data_list: list):
-    """Compute affine_M for each step using polygon_metric centroids from DB."""
-    # Build centroid lookup: cam_idx → slot_key → centroid (np array)
-    centroids = {}
-    for cam_data in cam_data_list:
-        idx = cam_data["cam_idx"]
-        centroids[idx] = {}
-        for slot in cam_data["slots"]:
-            poly = np.array(slot["polygon_metric"], dtype=float)
-            centroids[idx][slot["key"]] = poly.mean(axis=0)
-
-    for step in step_results:
-        a_idx = step["cam_a"]
-        b_idx = step["cam_b"]
-        dst_pts, src_pts = [], []
-        for ka, kb in step["pairs"]:
-            if ka in centroids.get(a_idx, {}) and kb in centroids.get(b_idx, {}):
-                dst_pts.append(centroids[a_idx][ka])
-                src_pts.append(centroids[b_idx][kb])
-
-        if len(src_pts) < 2:
-            print(f"[ERROR] Not enough valid pairs for step {a_idx}↔{b_idx}")
-            sys.exit(1)
-
-        M, inliers = cv2.estimateAffinePartial2D(
-            np.float32(src_pts), np.float32(dst_pts),
-            method=cv2.RANSAC, ransacReprojThreshold=0.5,
-            confidence=0.99, maxIters=2000, refineIters=10,
-        )
-        if M is None:
-            print(f"[ERROR] estimateAffinePartial2D failed for {a_idx}↔{b_idx}")
-            sys.exit(1)
-        step["affine_M"] = M
-        n_in = int(inliers.sum()) if inliers is not None else len(step["pairs"])
-        print(f"  Cam {b_idx} → Cam {a_idx}: {n_in}/{len(step['pairs'])} inliers")
-
-
-def compute_global_transforms(n_cams: int, step_results: list) -> list:
-    """BFS from cam 0 — returns list of 2×3 affine matrices (local → global)."""
-    edges = {}   # cam_b → (cam_a, M_3x3)
-    for step in step_results:
-        edges[step["cam_b"]] = (step["cam_a"], to_3x3(step["affine_M"]))
-
-    T3 = {0: np.eye(3)}
-    queue = [0]
-    while queue:
-        node = queue.pop(0)
-        for b, (a, M) in edges.items():
-            if a == node and b not in T3:
-                T3[b] = T3[a] @ M
-                queue.append(b)
-
-    return [T3.get(i, np.eye(3))[:2, :] for i in range(n_cams)]
-
-
-# ---------------------------------------------------------------------------
-# Save merged top-down PNG
-# ---------------------------------------------------------------------------
-def save_merged_topdown(path: Path, cam_data_list: list, global_transforms: list):
-    scale = TOPDOWN_SCALE
-
-    per_cam = []
-    all_pts = []
-    for cam_data, M in zip(cam_data_list, global_transforms):
-        cam_slots = []
-        for slot in cam_data["slots"]:
-            poly_local = np.array(slot["polygon_metric"], dtype=float)
-            poly_global = apply_affine_pts(M, poly_local)
-            cam_slots.append({
-                "key": slot["key"],
-                "row": slot["row"], "col": slot["col"],
-                "poly_global": poly_global,
-            })
-            all_pts.extend(poly_global.tolist())
-        per_cam.append(cam_slots)
-
-    if not all_pts:
-        print("[WARN] No active slots — nothing to draw.")
-        return
-
-    pts_arr = np.array(all_pts)
-    margin = 2.0
-    x_min = pts_arr[:, 0].min() - margin
-    y_min = pts_arr[:, 1].min() - margin
-    x_max = pts_arr[:, 0].max() + margin
-    y_max = pts_arr[:, 1].max() + margin
-
-    canvas_w = int((x_max - x_min) * scale) + 1
-    canvas_h = int((y_max - y_min) * scale) + 1
-    axis_pad = 60
-    title_pad = 40
-    legend_h = 26 * len(cam_data_list) + 10
-
-    img_w = canvas_w + axis_pad
-    img_h = canvas_h + axis_pad + title_pad + legend_h
-
-    def to_px(gx, gy):
-        return (
-            axis_pad + int((gx - x_min) * scale),
-            title_pad + legend_h + int((gy - y_min) * scale),
-        )
-
-    img = np.ones((img_h, img_w, 3), dtype=np.uint8) * 255
-
-    # Filled polygons per camera
-    for cam_idx, cam_slots in enumerate(per_cam):
-        color = cam_color(cam_idx)
-        fill = tuple(min(255, c + 70) for c in color)
-        layer = img.copy()
-        for slot in cam_slots:
-            pts_px = np.array([to_px(x, y) for x, y in slot["poly_global"]],
-                              dtype=np.int32).reshape(-1, 1, 2)
-            cv2.fillPoly(layer, [pts_px], fill)
-        cv2.addWeighted(layer, 0.45, img, 0.55, 0, img)
-
-    # Borders + labels
-    for cam_idx, cam_slots in enumerate(per_cam):
-        color = cam_color(cam_idx)
-        for slot in cam_slots:
-            pts_px = np.array([to_px(x, y) for x, y in slot["poly_global"]],
-                              dtype=np.int32).reshape(-1, 1, 2)
-            cv2.polylines(img, [pts_px], True, color, 2)
-            cx = int(pts_px[:, 0, 0].mean())
-            cy = int(pts_px[:, 0, 1].mean())
-            lbl = f"{slot['row']},{slot['col']}"
-            cv2.putText(img, lbl, (cx - 11, cy + 4),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.30, color, 1, cv2.LINE_AA)
-
-    # X axis
-    grid_bottom_y = title_pad + legend_h + canvas_h
-    for tick in range(int(x_min), int(x_max) + 1):
-        tx, _ = to_px(float(tick), y_min)
-        cv2.line(img, (tx, grid_bottom_y + 3), (tx, grid_bottom_y + 9), (80, 80, 80), 1)
-        cv2.putText(img, str(tick), (tx - 6, grid_bottom_y + 22),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.30, (80, 80, 80), 1)
-
-    # Y axis
-    for tick in range(int(y_min), int(y_max) + 1):
-        _, ty = to_px(x_min, float(tick))
-        cv2.line(img, (axis_pad - 6, ty), (axis_pad + 2, ty), (80, 80, 80), 1)
-        cv2.putText(img, str(tick), (2, ty + 4),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.30, (80, 80, 80), 1)
-
-    # Legend
-    for cam_idx, cam_data in enumerate(cam_data_list):
-        color = cam_color(cam_idx)
-        ly = title_pad + 12 + cam_idx * 26
-        cv2.rectangle(img, (axis_pad, ly - 9), (axis_pad + 18, ly + 7), color, -1)
-        lbl = f"Cam {cam_idx}: {cam_data['cam_name']}"
-        cv2.putText(img, lbl, (axis_pad + 24, ly + 5),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.48, (30, 30, 30), 1, cv2.LINE_AA)
-
-    # Title
-    cv2.putText(img, f"Merged parking map — {len(cam_data_list)} cameras",
-                (axis_pad, title_pad - 6), cv2.FONT_HERSHEY_SIMPLEX,
-                0.70, (30, 30, 30), 2, cv2.LINE_AA)
-
-    cv2.imwrite(str(path), img)
-    print(f"[merge_cameras] Merged top-down saved: {path}")
-
-
-# ---------------------------------------------------------------------------
-# Save individual top-down if missing
-# ---------------------------------------------------------------------------
-def ensure_topdown(output_dir: Path, cam_data: dict, global_transforms: list):
-    """Regenerate {cam_name}_topdown.png if it does not exist."""
-    from processing.calibrate_parking import save_topdown, load_config
-
-    cam_name = cam_data["cam_name"]
-    topdown_path = output_dir / f"{cam_name}_topdown.png"
-    if topdown_path.exists():
-        return
-
-    configs_dir = Path(os.getenv("CALIBRATION_CONFIGS_DIR", "calibration/configs"))
-    cfg = load_config(configs_dir, cam_name)
-    if cfg is None:
-        print(f"[WARN] Cannot regenerate top-down for {cam_name}: no config file found.")
-        return
-
-    slots_list = [
-        {
-            "row": int(k.split("_")[0]),
-            "col": int(k.split("_")[1]),
-            "status": v.get("status", "full"),
-        }
-        for k, v in cfg.get("slots", {}).items()
-    ]
-    active = {k: v.get("active", False) for k, v in cfg.get("slots", {}).items()}
-    save_topdown(
-        topdown_path, cam_name,
-        cfg["rows"], cfg["cols"],
-        cfg["slot_w"], cfg["slot_h"],
-        cfg.get("row_gap", 0.0),
-        slots_list, active,
-    )
-    print(f"[merge_cameras] Regenerated top-down: {topdown_path}")
-
-
-# ---------------------------------------------------------------------------
-# Polygon vertex-order canonicalization
-# ---------------------------------------------------------------------------
-def _canonical_quad(pts: np.ndarray) -> np.ndarray:
-    """
-    Sort a 4-vertex polygon into TL → TR → BR → BL order so that
-    corresponding corners align across cameras before averaging.
-
-    Coordinate system: x increases right, y increases down (metric space).
-      - TL = vertex with smallest  x + y
-      - BR = vertex with largest   x + y
-      - TR = remaining vertex with larger  x
-      - BL = remaining vertex with smaller x
-    """
-    pts = np.asarray(pts, dtype=float)
-    sums = pts[:, 0] + pts[:, 1]
-    order = np.argsort(sums)          # [tl_idx, ?, ?, br_idx]
-    tl = pts[order[0]]
-    br = pts[order[3]]
-    mid = pts[order[[1, 2]]]
-    if mid[0, 0] <= mid[1, 0]:
-        bl, tr = mid[0], mid[1]
-    else:
-        tr, bl = mid[0], mid[1]
-    return np.array([tl, tr, br, bl])
-
-
-# ---------------------------------------------------------------------------
-# IoU helper
-# ---------------------------------------------------------------------------
-def polygon_iou(poly_a: np.ndarray, poly_b: np.ndarray) -> float:
-    """Intersection-over-Union between two convex polygons (Nx2 float arrays).
-
-    Uses cv2.intersectConvexConvex whose return value is the intersection area.
-    Returns 0.0 if either polygon is degenerate or they do not overlap.
-    """
-    pa = np.asarray(poly_a, dtype=np.float32).reshape(-1, 1, 2)
-    pb = np.asarray(poly_b, dtype=np.float32).reshape(-1, 1, 2)
-    inter_area, _ = cv2.intersectConvexConvex(pa, pb)
-    if inter_area <= 0.0:
-        return 0.0
-    area_a = cv2.contourArea(pa)
-    area_b = cv2.contourArea(pb)
-    union_area = area_a + area_b - inter_area
-    if union_area <= 0.0:
-        return 0.0
-    return float(inter_area / union_area)
-
-
-# ---------------------------------------------------------------------------
-# Save merge results to DB
-# ---------------------------------------------------------------------------
-def save_merge_to_db(step_results: list, cam_data_list: list,
-                     global_transforms: list) -> int:
-    """Auto-match all slots via IoU in global metric space, then write to DB.
-
-    Algorithm:
-      1. Clear existing mapped_zone_id for every zone of the cameras being processed.
-      2. Project each slot's polygon_metric into global metric space using global_transforms.
-      3. For every pair of cameras (i, j), find mutual best-IoU matches above
-         IOU_MATCH_THRESHOLD and feed them into Union-Find.
-      4. Every slot (matched or singleton) ends up in a group.
-      5. For each group write one MappedZone (mean global polygon) and update
-         mapped_zone_id on all member zones.
-
-    step_results is accepted for API compatibility but not used by this function;
-    the matching is driven entirely by geometry.
-    """
-    from db import SessionLocal
-    from db.models import MappedZone, Zone
-
-    # ------------------------------------------------------------------
-    # Step 1 & 2 — project all slots to global metric space
-    # ------------------------------------------------------------------
-    # global_slots[cam_idx][key] = {"slot": slot_dict, "poly_global": ndarray}
-    global_slots: dict[int, dict[str, dict]] = {}
-    all_nodes: list[tuple] = []
-    for cam_data in cam_data_list:
-        cam_idx = cam_data["cam_idx"]
-        M = global_transforms[cam_idx]
-        global_slots[cam_idx] = {}
-        for slot in cam_data["slots"]:
-            poly_local = np.array(slot["polygon_metric"], dtype=float)
-            poly_global = apply_affine_pts(M, poly_local)
-            global_slots[cam_idx][slot["key"]] = {
-                "slot": slot,
-                "poly_global": poly_global,
-            }
-            all_nodes.append((cam_idx, slot["key"]))
-
-    # ------------------------------------------------------------------
-    # Step 3 — Union-Find initialisation (every slot is its own group)
-    # ------------------------------------------------------------------
-    parent: dict = {node: node for node in all_nodes}
-
-    def find(x):
-        while parent[x] != x:
-            parent[x] = parent[parent[x]]   # path compression (halving)
-            x = parent[x]
-        return x
-
-    def union(x, y):
-        px, py = find(x), find(y)
-        if px != py:
-            parent[px] = py
-
-    # ------------------------------------------------------------------
-    # Step 4 — Mutual best-IoU matching across every camera pair
-    # ------------------------------------------------------------------
-    cam_indices = [d["cam_idx"] for d in cam_data_list]
-    n_pairs_found = 0
-    for ii, ci in enumerate(cam_indices):
-        for cj in cam_indices[ii + 1:]:
-            items_i = list(global_slots[ci].items())   # [(key, entry), ...]
-            items_j = list(global_slots[cj].items())
-            if not items_i or not items_j:
-                continue
-
-            # best match for each slot in cam_i → cam_j
-            best_of_i: dict[str, tuple[float, str | None]] = {}
-            for ki, vi in items_i:
-                best_iou, best_kj = 0.0, None
-                for kj, vj in items_j:
-                    iou = polygon_iou(vi["poly_global"], vj["poly_global"])
-                    if iou > best_iou:
-                        best_iou, best_kj = iou, kj
-                best_of_i[ki] = (best_iou, best_kj)
-
-            # best match for each slot in cam_j → cam_i
-            best_of_j: dict[str, tuple[float, str | None]] = {}
-            for kj, vj in items_j:
-                best_iou, best_ki = 0.0, None
-                for ki, vi in items_i:
-                    iou = polygon_iou(vj["poly_global"], vi["poly_global"])
-                    if iou > best_iou:
-                        best_iou, best_ki = iou, ki
-                best_of_j[kj] = (best_iou, best_ki)
-
-            # Accept only mutual best matches above threshold
-            for ki, (iou_ij, kj) in best_of_i.items():
-                if kj is None or iou_ij < IOU_MATCH_THRESHOLD:
-                    continue
-                iou_ji, ki_back = best_of_j.get(kj, (0.0, None))
-                if ki_back == ki:   # mutual agreement
-                    union((ci, ki), (cj, kj))
-                    n_pairs_found += 1
-
-    print(f"[merge_cameras] IoU auto-match: {n_pairs_found} cross-camera pair(s) "
-          f"(threshold={IOU_MATCH_THRESHOLD})")
-
-    # ------------------------------------------------------------------
-    # Step 5 — Collect groups (singletons included)
-    # ------------------------------------------------------------------
-    groups: dict = {}
-    for node in all_nodes:
-        groups.setdefault(find(node), []).append(node)
-    all_groups = list(groups.values())
-
-    # ------------------------------------------------------------------
-    # Step 6 — Write to DB
-    # ------------------------------------------------------------------
-    db = SessionLocal()
-    try:
-        # Clear existing mapped_zone_id for every zone of the cameras in play
-        camera_ids = [d["camera_id"] for d in cam_data_list]
-        for cam_id in camera_ids:
-            db.query(Zone).filter(Zone.camera_id == cam_id).update(
-                {"mapped_zone_id": None}, synchronize_session=False
-            )
-        db.flush()
-
-        n_saved = 0
-        for group in all_groups:
-            polygons = []
-            zone_ids = []
-            for cam_idx, slot_key in group:
-                entry = global_slots.get(cam_idx, {}).get(slot_key)
-                if entry is None:
-                    continue
-                polygons.append(entry["poly_global"])
-                zone_ids.append(entry["slot"]["zone_id"])
-
-            if not polygons:
-                continue
-
-            # Canonicalize vertex order (TL→TR→BR→BL) before averaging so that
-            # vertex[i] of cam-A's polygon corresponds to vertex[i] of cam-B's.
-            canonical = [_canonical_quad(p) for p in polygons]
-            mean_poly = np.mean(canonical, axis=0).tolist()
-            mz = MappedZone(polygon_global_metric=mean_poly)
-            db.add(mz)
-            db.flush()
-
-            for zid in zone_ids:
-                z = db.query(Zone).filter(Zone.id == zid).first()
-                if z:
-                    z.mapped_zone_id = mz.id
-
-            n_saved += 1
-
-        db.commit()
-        n_multi = sum(1 for g in all_groups if len(g) > 1)
-        print(f"[merge_cameras] DB: {n_saved} MappedZone(s) written "
-              f"({n_multi} multi-camera, {n_saved - n_multi} singleton)")
-        return n_saved
-    finally:
-        db.close()
-
 
 def save_merge(step_results,selected_ids): #TODO
+    for i in range(step_results):
+        step_results[i]["pairs"]
+    data = {
+        "step_results":step_results,
+        "selected_ids":selected_ids
+    }
     try:
-        r = requests.post("",data=(step_results,selected_ids))
+        r = requests.post(f"{API_BASE}/merge/save",json=data)
+        r.raise_for_status()
     except Exception as e:
         ping(e)
     pass
@@ -1181,11 +793,6 @@ def save_merge(step_results,selected_ids): #TODO
 def main(recalibrate = False):
     
 
-    configs_dir = Path(os.getenv("CALIBRATION_CONFIGS_DIR", "calibration/configs"))
-    output_dir = Path(os.getenv("CALIBRATION_OUTPUT_DIR", "calibration/output"))
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    topdown_path = output_dir / "merged_topdown.png"
 
     # ------------------------------------------------------------------
     # Camera selection (skipped when --recalibrate to preserve existing behaviour)
@@ -1204,15 +811,18 @@ def main(recalibrate = False):
     # ------------------------------------------------------------------
     cam_data_list = load_cameras_from_db(selected_ids=selected_ids)
     
+    # Read frame_idx from config file (default 0)
+
+
+    # Extract representative frame for visualization
+    for i in range(len(cam_data_list)):
+        uri  = cam_data_list[i]["uri"]
+        frame = extract_frame(uri)
+        if frame is None:
+            frame = np.zeros((480, 640, 3), np.uint8)
+        cam_data_list[i]["frame"]=frame
     
-    n = len(cam_data_list)
-
-    if n == 1:
-        print("[merge_cameras] Only one camera — generating single-cam top-down.")
-        M_id = np.array([[1., 0., 0.], [0., 1., 0.]])
-        save_merged_topdown(topdown_path, cam_data_list, [M_id])
-        return
-
+   
     # ------------------------------------------------------------------
     # Single-window merge UI with sidebar
     # ------------------------------------------------------------------
@@ -1220,4 +830,4 @@ def main(recalibrate = False):
     ui = MergeUI(cam_views)
     step_results = ui.run()
 
-    save_merge(step_results,cam_data_list,n)
+    save_merge(step_results,cam_data_list)
