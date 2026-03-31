@@ -494,6 +494,7 @@ def metrics_report_kpi(camera_id, t_start, t_end, db: Session = Depends(get_db))
         func.count(detections_subquery.c.tracker).label("number of tracked items"),
     ).group_by(detections_subquery.c.class_name)
 
+
     to_ret = {
         "total_tracked_by_class": pd.DataFrame(total_tracked_by_class_q).to_dict(
             orient="records"
@@ -508,6 +509,9 @@ def metrics_report_kpi(camera_id, t_start, t_end, db: Session = Depends(get_db))
         "n_departures": pd.DataFrame(n_departures).to_dict(orient="records"),
         "n_tracked_det": pd.DataFrame(n_tracked_detect).to_dict(orient="records"),
     }
+
+    print(to_ret)
+
     return to_ret
 
 
