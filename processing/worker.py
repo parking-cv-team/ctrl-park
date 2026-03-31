@@ -43,19 +43,6 @@ def _poly_iou(x1: float, y1: float, x2: float, y2: float,
     union_area = bbox_area + zone_area - inter_area
     return inter_area / union_area if union_area > 0 else 0.0
 
-def _get_zone_ids(detections: sv.Detections, zone_polygons: List[Tuple[Zone, sv.PolygonZone]]) -> List[Optional[int]]:
-    """Get zone IDs for each detection."""
-    if len(detections) == 0:
-        return []
-    det_zone_ids: List[Optional[int]] = [None] * len(detections)
-    for zone_db, poly_zone in zone_polygons:
-        mask = poly_zone.trigger(detections)
-        for i, inside in enumerate(mask):
-            if inside and det_zone_ids[i] is None:
-                det_zone_ids[i] = cast(int, zone_db.id)
-    return det_zone_ids
-
-
 def _detection_passes_filters(
     class_name: str, tracker_id: Optional[int], timestamp: float, 
     x1: float, y1: float, x2: float, y2: float
@@ -70,6 +57,20 @@ def _detection_passes_filters(
         return True
     
     prev = detection_tracker[key]
+    
+    # Filter: less than minimum interval
+    if (timestamp - prev["timestamp"]) < MIN_SAVE_INTERVAL:
+        return False
+    
+    # Filter: bbox hasn't moved enough
+    if not (abs(prev["x1"] - x1) > BBOX_MOVEMENT_THRESHOLD or
+            abs(prev["y1"] - y1) > BBOX_MOVEMENT_THRESHOLD or
+            abs(prev["x2"] - x2) > BBOX_MOVEMENT_THRESHOLD or
+            abs(prev["y2"] - y2) > BBOX_MOVEMENT_THRESHOLD):
+        return False
+    
+    detection_tracker[key] = {"timestamp": timestamp, "x1": x1, "y1": y1, "x2": x2, "y2": y2}
+    return True
     
 def _get_zone_ids(
     detections: sv.Detections,
@@ -191,25 +192,73 @@ def _persist_detections(
     db, source: CameraSource, class_name: str, tracked: sv.Detections, 
     zone_polygons: List[Tuple[Zone, sv.PolygonZone]], timestamp: float
 ) -> None:
-    """Persist detections to database."""
+    """Persist detections to database with decoupled occupancy tracking."""
     if len(tracked) == 0:
         return
     
     det_zone_ids = _get_zone_ids(tracked, zone_polygons, source)
     dt = datetime.utcfromtimestamp(timestamp)
-    detections_to_add = {}
+    
+    # We use a list for rows to add to ensure we can handle multiple detections per frame
+    detections_to_save = []
     
     for i in range(len(tracked)):
         x1, y1, x2, y2 = tracked.xyxy[i]
-        
-        confidence = float(tracked.confidence[i]) if tracked.confidence is not None else 1.0 # ?
+        confidence = float(tracked.confidence[i]) if tracked.confidence is not None else 1.0
         tracker_id = int(tracked.tracker_id[i]) if tracked.tracker_id is not None else None
+        zone_id = det_zone_ids[i]
+        
+        # --- PHASE 1: OCCUPANCY STATE MANAGEMENT (Always runs) ---
+        # This part ensures stationary objects don't "expire" from the zone.
+        force_write = False  # Flag to indicate if we should bypass filters and save due to occupancy change
+        if zone_id is not None:
+            if zone_id not in live_tracker_ids:
+                live_tracker_ids[zone_id] = set()
+            if tracker_id is not None:
+                live_tracker_ids[zone_id].add(tracker_id)
+            
+            if zone_id not in occupancy_timers:
+                # Initial occupancy
+                occupancy_timers[zone_id] = {
+                    "tracker_id": tracker_id,
+                    "new_tracker_id": None,
+                    "new_tracker_timestamp": None,
+                    "last_seen_timestamp": timestamp,
+                    "last_detection_data": {"x1": x1, "y1": y1, "x2": x2, "y2": y2, "class_id": int(tracked.class_id[i])}
+                }
+                # Force a DB write for the very first time a zone becomes occupied
+                force_write = True 
+            else:
+                state = occupancy_timers[zone_id]
+                # Update last seen so _check_departures knows it's still there
+                state["last_seen_timestamp"] = timestamp
+                state["last_detection_data"] = {"x1": x1, "y1": y1, "x2": x2, "y2": y2, "class_id": int(tracked.class_id[i])}
+                
+                # Handle tracker transition logic (same as before)
+                if (state["tracker_id"] != tracker_id and state["new_tracker_id"] != tracker_id):
+                    state["new_tracker_id"] = tracker_id
+                    state["new_tracker_timestamp"] = timestamp
+                elif state["tracker_id"] == tracker_id:
+                    state["new_tracker_id"] = None
+                    state["new_tracker_timestamp"] = None
+                
+                if (state["new_tracker_timestamp"] is not None and 
+                    timestamp - state["new_tracker_timestamp"] > OCCUPANCY_TRANSITION_BUFFER):
+                    state["tracker_id"] = tracker_id
+                    state["new_tracker_id"] = None
+                    state["new_tracker_timestamp"] = None
+                    force_write = True
+                else:
+                    force_write = False
 
-        # Filter duplicate/noise
-        if not _detection_passes_filters(class_name, tracker_id, timestamp, x1, y1, x2, y2):
+        # --- PHASE 2: DATABASE FILTERING ---
+        # If it's a "blip" or hasn't moved, we stop here UNLESS it's a new occupancy event.
+        passed_filter = _detection_passes_filters(class_name, tracker_id, timestamp, x1, y1, x2, y2)
+        
+        if not (passed_filter or force_write):
             continue
         
-        # Create detection
+        # --- PHASE 3: PERSISTENCE ---
         cx, cy = (x1 + x2) / 2.0, (y1 + y2) / 2.0
         det_row = Detection(
             camera_id=source.id,
@@ -223,65 +272,23 @@ def _persist_detections(
             bbox_width=x2 - x1,
             bbox_height=y2 - y1,
             bbox_area=(x2 - x1) * (y2 - y1),
-            zone_id=det_zone_ids[i],
+            zone_id=zone_id,
         )
-        detections_to_add[det_row] = None
         
-        # Handle zone occupancy
-        zone_id = det_zone_ids[i]
-        if zone_id is not None:
-            # Track live tracker IDs per zone
-            if zone_id not in live_tracker_ids:
-                live_tracker_ids[zone_id] = set()
-            if tracker_id is not None:
-                live_tracker_ids[zone_id].add(tracker_id)
-            
-            if zone_id not in occupancy_timers:
-                occupancy_timers[zone_id] = {
-                    "tracker_id": tracker_id,
-                    "new_tracker_id": None,
-                    "new_tracker_timestamp": None,
-                }
-                detections_to_add[det_row] = ZoneOccupancy(
-                    detection_id=det_row.id,
-                    zone_id=zone_id,
-                    tracker_id=tracker_id,
-                )
-            else:
-                # Handle tracker transition
-                state = occupancy_timers[zone_id]
-                if (state["tracker_id"] != tracker_id and state["new_tracker_id"] != tracker_id):
-                    state["new_tracker_id"] = tracker_id
-                    state["new_tracker_timestamp"] = timestamp
-                elif state["tracker_id"] == tracker_id:
-                    state["new_tracker_id"] = None
-                    state["new_tracker_timestamp"] = None
-                
-                if (state["new_tracker_timestamp"] is not None and 
-                    timestamp - state["new_tracker_timestamp"] > OCCUPANCY_TRANSITION_BUFFER):
-                    state["tracker_id"] = tracker_id
-                    state["new_tracker_id"] = None
-                    state["new_tracker_timestamp"] = None
-                    detections_to_add[det_row] = ZoneOccupancy(
-                        detection_id=det_row.id,
-                        zone_id=zone_id,
-                        tracker_id=tracker_id,
-                    )
-                
-                # Update last seen timestamp
-                if state["tracker_id"] == tracker_id:
-                    state["last_seen_timestamp"] = timestamp
-                    state["last_detection"] = det_row
-    
-    # Save to DB
-    for det_row in detections_to_add:
         db.add(det_row)
+        db.flush() # Get the det_row.id
+        
+        # If this detection represents a change in zone occupancy, log it
+        if zone_id is not None and (force_write or passed_filter):
+            # We only write ZoneOccupancy rows when the primary occupant changes 
+            # or when we are recording a significant movement detection
+            db.add(ZoneOccupancy(
+                detection_id=det_row.id,
+                zone_id=zone_id,
+                tracker_id=tracker_id,
+            ))
+
     db.flush()
-    
-    for det_row, zone_occ in detections_to_add.items():
-        if zone_occ is not None:
-            zone_occ.detection_id = det_row.id
-            db.add(zone_occ)
 
 
 
