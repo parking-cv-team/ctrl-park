@@ -12,7 +12,9 @@ from db.models import Detection
 from datetime import datetime, timedelta, timezone
 from sqlalchemy import func, distinct, text
 import numpy as np
-
+from typing import List
+import pathlib as Path
+import json
 import pandas as pd
 import matplotlib
 import matplotlib.pyplot as plt
@@ -686,3 +688,135 @@ def get_mapped_zones_status(single_camera: bool = False):
 
     db.close()
     return result
+
+@app.get("/camera/config")
+def get_camera_config(cam_name: str):
+    
+    configs_dir, _ = get_config_paths()
+    path = configs_dir / f"{cam_name}.json"
+    if not path.exists():
+        cfg = None
+    with path.open() as f:
+        cfg = json.load(f)
+    
+    if cfg is not None:
+        initial_params = {
+            "rows":          cfg["rows"],
+            "cols":          cfg["cols"],
+            "slot_w":        cfg["slot_w"],
+            "slot_h":        cfg["slot_h"],
+            "row_gap":       cfg.get("row_gap", 0.0),
+            "files_per_row": cfg.get("files_per_row", 1),
+            "frame_idx":     cfg.get("frame_idx", 0),
+        }
+    else:
+        initial_params  = None
+    return initial_params
+
+
+def get_config_paths():
+    
+    configs_dir = Path(os.getenv("CALIBRATION_CONFIGS_DIR", "calibration/configs"))
+    output_dir  = Path(os.getenv("CALIBRATION_OUTPUT_DIR",  "calibration/output"))
+    configs_dir.mkdir(parents=True, exist_ok=True)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    return configs_dir, output_dir
+
+@app.post("/camera/config/save")
+def save_camera_config(cam_name,data={}):
+    
+    configs_dir, _ = get_config_paths()
+    path = configs_dir / f"{cam_name}.json"
+    
+    path.write_text(json.dumps(data, indent=2))
+    return 
+
+
+@app.post("/camera/topdown/save")
+def save_camera_topdown(cam_name,img):
+    img = np.array(img)
+    _, output_dir = get_config_paths()
+    
+    topdown_path = output_dir / f"{cam_name}_topdown.png"
+
+    cv2.imwrite(topdown_path,img)
+    return
+
+@app.post("/camera/config/zones")
+def save_zones_to_db(uri: str, cam_name: str, frame_w: int, frame_h: int,
+               H: List[List[float]], slots: list, active: dict, params: dict):
+    
+    H = np.array(H)
+    db = SessionLocal()
+    try:
+        camera = db.query(CameraSource).filter(CameraSource.uri == uri).first()
+        if not camera:
+            camera = CameraSource(name=cam_name, uri=uri)
+            db.add(camera)
+            db.flush()
+        else:
+            camera.name = cam_name
+
+        camera.frame_width  = frame_w
+        camera.frame_height = frame_h
+        camera.homography   = H.tolist()
+
+        db.query(Zone).filter(Zone.camera_id == camera.id).delete(
+            synchronize_session=False
+        )
+
+        slot_w       = params["slot_w"]
+        slot_h       = params["slot_h"]
+        row_gap      = params.get("row_gap", 0.0)
+        files_per_row = params.get("files_per_row", 1)
+
+        for s in sorted(slots, key=lambda x: (x["row"], x["col"])):
+            key = f"{s['row']}_{s['col']}"
+            if not active.get(key, False):
+                continue
+            poly_detect = s.get("polygon_detection_px")
+            if poly_detect is None:
+                continue
+            poly_metric = slot_metric_polygon(
+                s["row"], s["col"], slot_w, slot_h, row_gap, files_per_row
+            )
+            db.add(Zone(
+                name=key,
+                polygon=[[int(p[0]), int(p[1])] for p in poly_detect],
+                polygon_metric=poly_metric,
+                camera_id=camera.id,
+                category="parking lot",
+            ))
+
+        db.commit()
+        n_zones = sum(
+            1 for s in slots
+            if active.get(f"{s['row']}_{s['col']}", False)
+            and s.get("polygon_detection_px") is not None
+        )
+        print(f"[calibrate_parking] Saved {n_zones} zone(s) to DB for URI: {uri}")
+    finally:
+        db.close()
+
+
+def slot_metric_polygon(row: int, col: int,
+                        slot_w: float, slot_h: float,
+                        row_gap: float = 0.0,
+                        files_per_row: int = 1) -> list:
+                        
+    fi  = row % files_per_row
+    lr  = row // files_per_row
+    x0  = col * slot_w
+    y0  = slot_y_origin(fi, lr, slot_h, row_gap, files_per_row)
+    return [
+        [x0,          y0         ],
+        [x0 + slot_w, y0         ],
+        [x0 + slot_w, y0 + slot_h],
+        [x0,          y0 + slot_h],
+    ]
+
+def slot_y_origin(file_idx: int, logical_row: int,
+                  slot_h: float, row_gap: float,
+                  files_per_row: int) -> float:
+                  
+    return logical_row * (files_per_row * slot_h + row_gap) + file_idx * slot_h
