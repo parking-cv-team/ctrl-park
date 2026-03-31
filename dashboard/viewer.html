@@ -238,7 +238,6 @@
                 });
                 cx /= points.length;
                 cz /= points.length;
-                cz = -cz; // Flip Z due to mesh rotation
 
                 // Create canvas for text
                 const canvas = document.createElement("canvas");
@@ -313,7 +312,7 @@
                     depthWrite: false,
                 });
                 const zone = new THREE.Mesh(zoneGeometry, zoneMaterial);
-                zone.rotation.x = -Math.PI / 2; // Rotate to lie flat on ground
+                zone.rotation.x = Math.PI / 2; // Rotate to lie flat on ground
                 zone.position.y = margin; // Small positive margin above ground to prevent clipping
                 zone.castShadow = false; // Don't cast shadows to avoid clipping artifacts
                 zone.receiveShadow = true;
