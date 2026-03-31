@@ -314,6 +314,10 @@ def request_timeseries(camera_id, t_i, t_f):
             ts_2 = pd.DataFrame(r_j["ts_objects"])
             ts_3 = pd.DataFrame(r_j["ts_parked"])
 
+            ts_1['t'] = pd.to_datetime(ts_1['t'])
+            ts_2['t'] = pd.to_datetime(ts_2['t'])
+            ts_3['t'] = pd.to_datetime(ts_3['t'])
+            
             fig, axes = plt.subplots(3, 1, figsize=(10, 7))
 
             fig.suptitle("Timeseries Reports")

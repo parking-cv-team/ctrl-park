@@ -20,7 +20,8 @@ import matplotlib.pyplot as plt
 import cv2
 import base64
 from scipy.ndimage import gaussian_filter
-from flask import request
+from fastapi import Depends
+
 matplotlib.use("Agg")
 
 import io
@@ -807,6 +808,8 @@ def save_zones_to_db(data: ZonesToSaveToDB, db: Session = Depends(get_db)):
             if active.get(f"{s['row']}_{s['col']}", False)
             and s.get("polygon_detection_px") is not None
         )
+    finally:
+        pass 
 
 
 def slot_metric_polygon(row: int, col: int,
