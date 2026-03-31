@@ -18,6 +18,9 @@ import os
 import sys
 from pathlib import Path
 
+# Disable GStreamer before cv2 is imported — it crashes on VideoCapture on some systems
+os.environ.setdefault("OPENCV_VIDEOIO_PRIORITY_GSTREAMER", "0")
+
 import cv2
 import numpy as np
 from dotenv import load_dotenv
@@ -61,8 +64,7 @@ def uri_to_cam_name(uri: str) -> str:
         s = re.sub(r"[^a-zA-Z0-9._]", "_", s)
     else:
         s = Path(uri).stem
-    import re as _re
-    s = _re.sub(r"_+", "_", s).strip("_")
+    s = re.sub(r"_+", "_", s).strip("_")
     return s
 
 
@@ -85,31 +87,52 @@ def apply_affine_pts(M2x3, pts):
 # Frame extraction
 # ---------------------------------------------------------------------------
 def extract_frame(uri: str, frame_idx: int) -> np.ndarray | None:
-    cap = cv2.VideoCapture(uri)
-    if not cap.isOpened():
-        return None
-    cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
-    ok, frame = cap.read()
-    cap.release()
-    return frame if ok else None
+    # Run VideoCapture in a subprocess to isolate GStreamer/codec segfaults.
+    # Protocol: first 12 bytes = "H W C\n" (shape), then raw pixel bytes.
+    script = (
+        "import cv2, sys; "
+        f"cap = cv2.VideoCapture({repr(uri)}); "
+        f"cap.set(cv2.CAP_PROP_POS_FRAMES, {frame_idx}); "
+        "ok, f = cap.read() if cap.isOpened() else (False, None); "
+        "cap.release(); "
+        "sys.stdout.buffer.write(f'{f.shape[0]} {f.shape[1]} {f.shape[2]}\\n'.encode() + f.tobytes()) "
+        "if (ok and f is not None) else None"
+    )
+    import subprocess
+    try:
+        r = subprocess.run([sys.executable, "-c", script],
+                           capture_output=True, timeout=8)
+        if r.returncode == 0 and r.stdout:
+            header, _, data = r.stdout.partition(b"\n")
+            h, w, c = (int(x) for x in header.split())  # ValueError caught below
+            if len(data) == h * w * c:
+                return np.frombuffer(data, np.uint8).reshape((h, w, c))
+    except Exception:
+        pass
+    return None
 
 
 # ---------------------------------------------------------------------------
 # Load cameras from DB
 # ---------------------------------------------------------------------------
-def load_cameras_from_db(configs_dir: Path) -> list:
-    """Load all cameras with homography and polygon_metric zones from DB."""
+def load_cameras_from_db(configs_dir: Path, selected_ids: list | None = None) -> list:
+    """Load cameras with homography and polygon_metric zones from DB.
+
+    If selected_ids is provided, only those camera IDs are loaded.
+    """
     from db import SessionLocal
     from db.models import CameraSource, Zone
 
     db = SessionLocal()
     try:
-        cameras = (
+        q = (
             db.query(CameraSource)
             .filter(CameraSource.homography.isnot(None))
             .order_by(CameraSource.id)
-            .all()
         )
+        if selected_ids is not None:
+            q = q.filter(CameraSource.id.in_(selected_ids))
+        cameras = q.all()
         if not cameras:
             print("[ERROR] No cameras with homography found in DB.")
             print("        Run python -m processing.calibrate_parking --uri <uri> first.")
@@ -1244,9 +1267,21 @@ def main():
     topdown_path = output_dir / "merged_topdown.png"
 
     # ------------------------------------------------------------------
+    # Camera selection (skipped when --recalibrate to preserve existing behaviour)
+    # ------------------------------------------------------------------
+    selected_ids = None
+    if not args.recalibrate:
+        from processing.select_cameras import select_cameras
+        selected_ids = select_cameras()
+        if selected_ids is None or len(selected_ids) == 0:
+            print("[merge_cameras] No cameras selected — aborting.")
+            sys.exit(0)
+        print(f"[merge_cameras] Selected camera IDs: {selected_ids}")
+
+    # ------------------------------------------------------------------
     # Load cameras from DB
     # ------------------------------------------------------------------
-    cam_data_list = load_cameras_from_db(configs_dir)
+    cam_data_list = load_cameras_from_db(configs_dir, selected_ids=selected_ids)
     n = len(cam_data_list)
     print(f"[merge_cameras] Found {n} calibrated camera(s): "
           + ", ".join(d["cam_name"] for d in cam_data_list))
