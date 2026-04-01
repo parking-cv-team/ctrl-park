@@ -565,7 +565,11 @@ def ping(e):
 def start_pipeline():
     try:
         r = requests.post(f"{API_BASE}/start/pipeline")
-    except:
+        r = r.json()
+        st.write(f"{r["status"]} with {r["streams"]} streams")
+        st.rerun()
+    except Exception as e:
+        ping(e)
         st.error("something has gone wrong starting the pipeline")
         return
     st.session_state.pipeline_started = True
