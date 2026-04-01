@@ -1,7 +1,12 @@
 import cv2
 import time
 import numpy as np
-from db.models import Zone
+import sys
+import os
+import requests
+
+API_BASE = os.getenv("API_BASE_URL", "http://localhost:8000")
+
 
 _ZONE_COLORS: list[tuple[int, int, int]] = [
     (0, 255, 0),  # green
@@ -14,7 +19,7 @@ _ZONE_COLORS: list[tuple[int, int, int]] = [
     (128, 0, 128),  # purple
 ]
 
-def draw_zones(frame: np.ndarray, zones: list[Zone]) -> np.ndarray:
+def draw_zones(frame: np.ndarray, zones: list) -> np.ndarray:
     """Render zones onto a copy of canvas."""
     overlay = frame.copy()
     out = frame.copy()
@@ -63,3 +68,24 @@ def run_opencv_window(rtsp_url, zones):
 
     cap.release()
     cv2.destroyAllWindows()
+
+
+def get_zones_to_draw(camera_id):
+    try:
+        response = requests.get(
+            f"{API_BASE}/analytics/zones/poly", params={"camera_id": camera_id}
+        )
+        response.raise_for_status()
+        rows = response.json()
+        return list(rows)
+
+    except Exception as e:
+        print("DASHBOARD ERROR: COULD NOT FETCH ZONES FOR CAMERA", camera_id)
+
+if __name__ == "__main__":
+    rtsp_url = sys.argv[1]
+    camera_id = int(sys.argv[2])
+
+    zones = get_zones_to_draw(camera_id)
+
+    run_opencv_window(rtsp_url, zones)

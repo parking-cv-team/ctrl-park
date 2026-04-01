@@ -14,9 +14,9 @@ import matplotlib.ticker as ticker
 import numpy as np
 import time
 from multiprocessing import Process
-from video_player import run_opencv_window as run_rstp_feed
 from dashboard.calbrate_camera import run_zone_creator
 import matplotlib.dates as mdates
+import subprocess
 
 # current dashboard structure:
 #
@@ -74,55 +74,65 @@ def camera_selected():
 
     if st.session_state.confirmed_camera is not None:
 
-        st.success(f"You confirmed: {st.session_state.confirmed_camera}")
+        st.success(f"You confirmed: {st.session_state.confirmed_camera['name']}")
 
-        number_of_cars(camera)
+        tab_overview, tab_kpis, tab_tracking, tab_reports, tab_3d = st.tabs(
+            [
+                "Overview", "KPIs", "Tracking", "Reports", "3D Simulation"
+            ]
+        )
+        with tab_overview:
 
-        cap, placeholder, zones = place_a_video(camera)
+            number_of_cars(camera)
 
-        if play_vid := st.button("Play Video (with zones)"):
-            print("AAAAAARGH (launching rtsp player)")
-            p = Process(target=run_rstp_feed, args=(RTSP_URL, zones), daemon=True)
-            p.start()
-            p.join()
+            cap, placeholder, zones = place_a_video(camera)
 
+            if play_vid := st.button("Play Video (with zones)"):
+                subprocess.Popen(
+                    ['python', 'dashboard/video_player.py', camera['uri'], str(camera['id'])]
+                )
+
+            # tabella occupazioni
+            with st.empty():
+                draw_table(camera)
+
+            # veicoli fuori
+            with st.empty():
+                veicoli_fuori(camera)
         # bottoni per visualizzare le zone, visualizzare le heatmaps, e visualizzare le metriche (KPIs) in tempo reale
-        col_bot = st.columns(2)
-        with col_bot[0]:
-            st.checkbox("Show tracking map", key="show_tracking_map")
-        with col_bot[1]:
-            st.checkbox("Show main KPIs (live)", key="show_kpis_live")
+        with tab_kpis:
+            request_kpis_live(camera['id'])
+        
+        with tab_reports:
+            st.markdown("### Metrics Report and Time Series")
+            cols = st.columns(2)
+            with cols[0]:
+                # setto il tempo iniziale a 24 ore prima
+                default_dt = datetime.now() - timedelta(days=1)
+                ti = st.datetime_input("Time Start", value=default_dt, key='ti', step = 60)
+            with cols[1]:
+                tf = st.datetime_input("Time End", key = 'tf', step=60)
 
-        if st.session_state.show_kpis_live:
-            request_kpis_live(camera["id"])
+            with st.empty():
+                request_report(camera["id"], ti, tf)
 
-        if st.session_state.show_tracking_map:
-            st.markdown("### Tracking Plots and Heatmaps")
+            with st.empty():
+                request_timeseries(camera["id"], ti, tf)
+
+        with tab_tracking:
             request_tracking_plots(camera)
 
-        # tabella occupazioni
-        with st.empty():
-            draw_table(camera)
+        with tab_3d:
+            # 3d map logic
+            mapped_zones = get_mapped_zones()
+            singlecamera = False
+            if not mapped_zones:
+                # st.warning("No mapped zones found. Attempting single camera mode")
+                mapped_zones = get_mapped_zones(True)
+                singlecamera = True
+            if mapped_zones:
+                display_3d_viewer(mapped_zones, single_camera=singlecamera)
 
-        # veicoli fuori
-        with st.empty():
-            veicoli_fuori(camera)
-
-        # create button to create main metrics report (KPI, time series blablabla)
-        st.markdown("### Metrics Report and Time Series")
-        cols = st.columns(2)
-        with cols[0]:
-            # setto il tempo iniziale a 24 ore prima
-            default_dt = datetime.now() - timedelta(days=1)
-            ti = st.datetime_input("Time Start", value=default_dt, key='ti', step = 60)
-        with cols[1]:
-            tf = st.datetime_input("Time End", key = 'tf', step=60)
-
-        with st.empty():
-            request_report(camera["id"], ti, tf)
-
-        with st.empty():
-            request_timeseries(camera["id"], ti, tf)
 
     else:
         st.info("Please select an option and click the button.")
@@ -132,10 +142,11 @@ def camera_selected():
 def safe_metric(widget, label, value_fn):
     try:
         widget.metric(label, value_fn())
-    except:
+    except Exception as e:
         widget.metric(label, "N/A")
+        print(e)
 
-@st.fragment(run_every=5)  # start with 1-5 seconds, not 0.1
+@st.fragment(run_every=5)  
 def request_kpis_live(camera_id):
     st.markdown("## Live KPIs")
     placeholder = st.empty()
@@ -225,10 +236,10 @@ def veicoli_fuori(camera):
             unique.append(x)
             seen.add(x["tracker_id"])
 
-        s = ""
+        s = "Found the following objects outside zones:"
         for x in unique:
             s += (
-                f"**Found {x['class']} outside zones at** x:{x['cx']} y:{x['cy']} with tracking id: {x['tracker_id']} at timestamp: {x['time']}\n"
+                f"  \n⋙ A **{x['class']}** at *x:{x['cx']} y:{x['cy']}* having tracking id *{x['tracker_id']}* at timestamp: *{x['time']}*"
             )
 
         st.markdown(s)
@@ -404,6 +415,11 @@ def draw_table(camera):
         response.raise_for_status()
         rows = response.json()
         zone = {str(i["zone"]): i["occupancy"] for i in rows}
+        
+        emoji_mapping = {"not occupied": "| 🟢 | **Free**", "occupied": "| 🔴 | **Occupied**"}
+
+        zone = {k: emoji_mapping.get(v,v) for k,v in zone.items()}
+
         st.table(zone)
 
     except Exception as e:
@@ -456,6 +472,7 @@ def camera_form():
     with st.form("camera-form"):
         name = st.text_input("Camera name")
         uri = st.text_input("Camera URI")
+        
         submitted = st.form_submit_button("Register")
         if submitted:
             try:
@@ -518,6 +535,14 @@ def get_mapped_zones(single_camera=False):
         return None
 
 
+def merge():
+    st.markdown("## Merge Parking lots")
+    st.markdown("Press the button below to merge the designed parking lots so far")
+
+    if st.button(label="Merge...", type="primary"):
+        pass # TODO: IMPLEMENT MERGING LOGIC
+
+
 def body():
     st.title("Ctrl+Park Dashboard")
     st.markdown("Welcome to your dashboard")
@@ -529,19 +554,12 @@ def body():
     if "show_tracking_map" not in st.session_state:
         st.session_state.show_tracking_map = False
     camera_form()
-    camera_button()
-    camera_selected()
 
-    # 3d map logic
-    st.markdown("---")
-    mapped_zones = get_mapped_zones()
-    singlecamera = False
-    if not mapped_zones:
-        # st.warning("No mapped zones found. Attempting single camera mode")
-        mapped_zones = get_mapped_zones(True)
-        singlecamera = True
-    if mapped_zones:
-        display_3d_viewer(mapped_zones, single_camera=singlecamera)
+    merge()
+
+    camera_button()
+
+    camera_selected()
 
 
 body()
