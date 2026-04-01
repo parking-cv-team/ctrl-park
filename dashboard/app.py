@@ -125,12 +125,10 @@ def camera_selected():
             request_tracking_plots(camera)
 
         with tab_3d:
-            print(">>>>>> 1")
             # 3d map logic
             mapped_zones = get_mapped_zones()
             singlecamera = False
             if not mapped_zones:
-                print(">>>>>>>> 2")
                 st.warning("No mapped zones found. Attempting single camera mode")
                 mapped_zones = get_mapped_zones(camera['id'], True)
                 singlecamera = True
@@ -521,8 +519,6 @@ def display_3d_viewer(camera_id, zones, single_camera):
     </script>
     """
     html_code = html_code.replace("<body>", inject_script + "<body>")
-
-    print(html_code)
 
     components.html(html_code, height=700)
 
