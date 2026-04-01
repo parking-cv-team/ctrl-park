@@ -1113,3 +1113,21 @@ def save_merge_to_db(step_results: list, cam_data_list: list,
         return n_saved
     finally:
         pass
+
+@app.post("/start/pipeline")
+def start_pipe_line(videos: List[str] = None):
+    import subprocess
+    import sys
+    targets = videos or [None]
+    for video in targets:
+        cmd = [sys.executable, "-m", "processing.run"]
+        if video:
+            cmd += ["--video", video]
+        subprocess.Popen(cmd, cwd=Path(__file__).parent.parent)
+    return {"status": "pipeline started", "streams": len(targets)}
+
+@app.get("/merged")
+def has_been_merged():
+    _,output_dir = get_config_paths()
+    topdown_path= output_dir / "merged_topdown.png"
+    return os.path.exists(topdown_path)
