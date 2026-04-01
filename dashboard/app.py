@@ -125,15 +125,17 @@ def camera_selected():
             request_tracking_plots(camera)
 
         with tab_3d:
+            print(">>>>>> 1")
             # 3d map logic
             mapped_zones = get_mapped_zones()
             singlecamera = False
             if not mapped_zones:
-                # st.warning("No mapped zones found. Attempting single camera mode")
-                mapped_zones = get_mapped_zones(True)
+                print(">>>>>>>> 2")
+                st.warning("No mapped zones found. Attempting single camera mode")
+                mapped_zones = get_mapped_zones(camera['id'], True)
                 singlecamera = True
             if mapped_zones:
-                display_3d_viewer(mapped_zones, single_camera=singlecamera)
+                display_3d_viewer(camera['id'], mapped_zones, single_camera=singlecamera)
 
 
     else:
@@ -146,7 +148,6 @@ def safe_metric(widget, label, value_fn):
         widget.metric(label, value_fn())
     except Exception as e:
         widget.metric(label, "N/A")
-        print(e)
 
 @st.fragment(run_every=5)  
 def request_kpis_live(camera_id):
@@ -490,7 +491,7 @@ def camera_form():
     
 
 
-def display_3d_viewer(zones, single_camera):
+def display_3d_viewer(camera_id, zones, single_camera):
     """Load and display the 3D viewer with zone data from database."""
     st.write("## 3D Parking Lot Viewer")
     st.markdown("In this part you will be able to interact with a 3D simulation of the parking lots")
@@ -516,17 +517,21 @@ def display_3d_viewer(zones, single_camera):
     window.zonesDataFromPython = {zones_json};
     window.API_BASE = "{API_BASE}";
     window.SINGLE_CAMERA_MODE = {'true' if single_camera else 'false'};
+    window.CAMERA_ID = {camera_id};
     </script>
     """
     html_code = html_code.replace("<body>", inject_script + "<body>")
 
+    print(html_code)
+
     components.html(html_code, height=700)
 
 
-def get_mapped_zones(single_camera=False):
+def get_mapped_zones(camera_id=0, single_camera=False):
     url = f"{API_BASE}/mapped_zones/poly"
     if single_camera:
-        url += "?single_camera=true"
+        url += f"?single_camera=true&camera_id={camera_id}"
+
     r = requests.get(url)
 
     if r.status_code == 200:
