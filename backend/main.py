@@ -22,7 +22,7 @@ import base64
 from scipy.ndimage import gaussian_filter
 from fastapi import Depends
 from sqlalchemy.orm import Session
-from flask import request
+
 from processing.merge_cameras import estimate_transforms,compute_global_transforms,ensure_topdown,save_merged_topdown,polygon_iou,_canonical_quad
 from processing.merge_cameras import apply_affine_pts
 

@@ -215,7 +215,9 @@ def _persist_detections(
         tracker_id = int(tracked.tracker_id[i]) if tracked.tracker_id is not None else None
 
         # Filter duplicate/noise
-        if not _detection_passes_filters(class_name, tracker_id, timestamp, x1, y1, x2, y2):
+
+        print(class_name, tracker_id, timestamp, x1, y1, x2, y2)
+        if not _detection_passes_filters(source.id, class_name, tracker_id, timestamp, x1, y1, x2, y2):
             continue
         
         # Create detection
