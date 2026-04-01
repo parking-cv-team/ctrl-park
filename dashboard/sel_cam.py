@@ -38,42 +38,22 @@ def _grab_frame(uri: str) -> np.ndarray: # should be good
     corrupting the parent process's display state, which would cause a
     segfault when merge_cameras later tries to open its own OpenCV window.
     """
-    import subprocess
-    import sys
-
-    script = (
-        "import os; "
-        "os.environ.setdefault('OPENCV_VIDEOIO_PRIORITY_GSTREAMER', '0'); "
-        "import cv2, sys; "
-        f"cap = cv2.VideoCapture({repr(uri)});"
-        "if cap is None:"
-        "   return None"
-        "for _ in range(30):"
-        "   ok,f=cap.read()"
-        "ok, f = cap.read() if cap.isOpened() else (False, None); "
-        "cap.release(); "
-        "sys.stdout.buffer.write("
-        "    f'{f.shape[0]} {f.shape[1]} {f.shape[2]}\\n'.encode() + f.tobytes()"
-        ") if (ok and f is not None) else None"
-    )
+   
     fallback = np.zeros((THUMB_H, THUMB_W, 3), np.uint8)
-    try:
-        r = subprocess.run(
-            [sys.executable, "-c", script],
-            capture_output=True,
-            timeout=8,
-        )
-        if r.returncode == 0 and r.stdout:
-            header, _, data = r.stdout.partition(b"\n")
-            h, w, c = (int(x) for x in header.split())
-            if len(data) == h * w * c:
-                frame = np.frombuffer(data, np.uint8).reshape((h, w, c))
-                return cv2.resize(frame, (THUMB_W, THUMB_H))
-    except Exception:
-        pass
-
     cv2.putText(fallback, "unavailable", (20, THUMB_H // 2),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.7, (80, 80, 200), 2)
+    cap = cv2.VideoCapture(uri)
+    if cap is None:
+        return fallback
+    for _ in range(30):
+        ok,_ = cap.read()
+    ok,frame = cap.read()
+    cap.release()
+    print(ok)
+    
+    if ok:
+        return cv2.resize(frame, (THUMB_W, THUMB_H))
+    
     return fallback
 
 
@@ -92,7 +72,6 @@ def ping(e):
         pass
 
 def select_cameras() -> list:
-    
     cams = _load_cameras()
     if not cams:
         print("[select_cameras] No calibrated cameras found in DB.")
@@ -104,6 +83,7 @@ def select_cameras() -> list:
 
     #print(f"[select_cameras] Loading frames for {n} camera(s)…")
     thumbs = [_grab_frame(c["uri"]) for c in cams]
+    
     selected = [True] * n  # all selected by default
 
     BTN_H = 48

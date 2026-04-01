@@ -75,29 +75,19 @@ def apply_affine_pts(M2x3, pts):
 def extract_frame(uri: str) -> np.ndarray | None:
     # Run VideoCapture in a subprocess to isolate GStreamer/codec segfaults.
     # Protocol: first 12 bytes = "H W C\n" (shape), then raw pixel bytes.
-    script = (
-        "import cv2, sys; "
-        f"cap = cv2.VideoCapture({repr(uri)}); "
-        "if cap is None:"
-        "   return None"
-        "for _ in range(30):"
-        "   ok,f=cap.read()"
-        "ok, f = cap.read() if cap.isOpened() else (False, None); "
-        "cap.release(); "
-        "sys.stdout.buffer.write(f'{f.shape[0]} {f.shape[1]} {f.shape[2]}\\n'.encode() + f.tobytes()) "
-        "if (ok and f is not None) else None"
-    )
-    import subprocess
-    try:
-        r = subprocess.run([sys.executable, "-c", script],
-                           capture_output=True, timeout=8)
-        if r.returncode == 0 and r.stdout:
-            header, _, data = r.stdout.partition(b"\n")
-            h, w, c = (int(x) for x in header.split())  # ValueError caught below
-            if len(data) == h * w * c:
-                return np.frombuffer(data, np.uint8).reshape((h, w, c))
-    except Exception:
-        pass
+    
+    cap = cv2.VideoCapture(uri)
+    if cap is None:
+        return None
+    for _ in range(30):
+        ok,_ = cap.read()
+    ok,frame = cap.read()
+    cap.release()
+    print(ok)
+    
+    if ok:
+        return frame
+    
     return None
 
 
@@ -110,20 +100,17 @@ def load_cameras_from_db(selected_ids: list | None = None) -> list: #TODO
     If selected_ids is provided, only those camera IDs are loaded.
     """
     try:
-        r = requests.get(f"{API_BASE}/camera/selected_data", params={"selected_ids":selected_ids})
+        r = requests.get(f"{API_BASE}/camera/selected_data", json={"selected_ids":selected_ids})
         r.raise_for_status()
         rows = r.json()
         cam_data =[]
         for i in rows:
-            slots = i.slots
-            for i in range(len(slots)):
-                slots[i]["polygon_metric"] = np.array(slots[i]["polygon_metric"],dtype=float)
             cam_data.append({
-                "cam_idx": i.cam_idx,
-                "camera_id": i.camera_id,
-                "uri": i.uri,
-                "cam_name": i.cam_name,
-                "slots": slots,
+                "cam_idx": i["cam_idx"],
+                "camera_id": i["camera_id"],
+                "uri": i["uri"],
+                "cam_name": i["cam_name"],
+                "slots": i["slots"],
             })
         return cam_data
     except Exception as e:
@@ -773,9 +760,7 @@ class MergeUI:
 
 
 
-def save_merge(step_results,selected_ids): #TODO
-    for i in range(step_results):
-        step_results[i]["pairs"]
+def save_merge(step_results,selected_ids):
     data = {
         "step_results":step_results,
         "selected_ids":selected_ids

@@ -21,9 +21,11 @@ import cv2
 import base64
 from scipy.ndimage import gaussian_filter
 from fastapi import Depends
-
+from sqlalchemy.orm import Session
 from flask import request
 from processing.merge_cameras import estimate_transforms,compute_global_transforms,ensure_topdown,save_merged_topdown,polygon_iou,_canonical_quad
+from processing.merge_cameras import apply_affine_pts
+
 matplotlib.use("Agg")
 
 import io
@@ -845,10 +847,12 @@ def ping(e):
     return "ping"
 
 
+class SelectedIds(BaseModel):
+    selected_ids: list
+
 @app.get("/camera/selected_data")
-def get_selected_Camera_data(selected_ids, db: Session = Depends(get_db)):
-
-
+def get_selected_Camera_data(data: SelectedIds, db: Session = Depends(get_db)):
+    selected_ids = data.selected_ids
     try:
         q = (
             db.query(CameraSource)
@@ -885,7 +889,7 @@ def get_selected_Camera_data(selected_ids, db: Session = Depends(get_db)):
                 except ValueError:
                     print(f"[WARN] Cannot parse row/col from zone name '{zone.name}' — skipping.")
                     continue
-                poly_metric = np.array(zone.polygon_metric, dtype=float).tolist()
+                poly_metric = np.array(zone.polygon_metric, dtype=float)
                 centroid = poly_metric.mean(axis=0).tolist()
                 slots.append({
                     "key": zone.name,

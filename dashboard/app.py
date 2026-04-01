@@ -480,7 +480,7 @@ def camera_form():
             try:
                 
                 st.session_state.camera_name = name
-                pippo = Process(target=run_zone_creator, args=(RTSP_URL,st.session_state.camera_name), daemon=True)
+                pippo = Process(target=run_zone_creator, args=(st.session_state.camera_name,uri), daemon=True)
                 pippo.start()
                 pippo.join()
                 st.success("The camera is being registered")
