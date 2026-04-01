@@ -208,7 +208,7 @@ class CameraView:
 # PairingState
 # ---------------------------------------------------------------------------
 class PairingState:
-    MIN_PAIRS = 2
+    MIN_PAIRS = 1
 
     def __init__(self, view_a: CameraView, view_b: CameraView):
         self.view_a  = view_a
@@ -790,6 +790,7 @@ def merge_cameras(recalibrate = False):
             return None
         print(f"[merge_cameras] Selected camera IDs: {selected_ids}")
 
+
     # ------------------------------------------------------------------
     # Load cameras from DB
     # ------------------------------------------------------------------
@@ -810,8 +811,11 @@ def merge_cameras(recalibrate = False):
     # ------------------------------------------------------------------
     # Single-window merge UI with sidebar
     # ------------------------------------------------------------------
-    cam_views = [CameraView(d["cam_idx"], d) for d in cam_data_list]
-    ui = MergeUI(cam_views)
-    step_results = ui.run()
+    if len(selected_ids)>1:
+        cam_views = [CameraView(d["cam_idx"], d) for d in cam_data_list]
+        ui = MergeUI(cam_views)
+        step_results = ui.run()
+    else:
+        step_results = []
 
     save_merge(step_results,selected_ids)
