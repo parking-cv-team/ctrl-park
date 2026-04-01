@@ -52,6 +52,18 @@ def _poly_iou(x1: float, y1: float, x2: float, y2: float,
     union_area = bbox_area + zone_area - inter_area
     return inter_area / union_area if union_area > 0 else 0.0
 
+def _get_zone_ids(detections: sv.Detections, zone_polygons: List[Tuple[Zone, sv.PolygonZone]]) -> List[Optional[int]]:
+    """Get zone IDs for each detection."""
+    if len(detections) == 0:
+        return []
+    det_zone_ids: List[Optional[int]] = [None] * len(detections)
+    for zone_db, poly_zone in zone_polygons:
+        mask = poly_zone.trigger(detections)
+        for i, inside in enumerate(mask):
+            if inside and det_zone_ids[i] is None:
+                det_zone_ids[i] = cast(int, zone_db.id)
+    return det_zone_ids
+
 
 def _detection_passes_filters(
     camera_id: int, class_name: str, tracker_id: Optional[int], timestamp: float,
@@ -67,21 +79,7 @@ def _detection_passes_filters(
         return True
 
     prev = detection_tracker[key]
-
-    # Filter: less than minimum interval
-    if (timestamp - prev["timestamp"]) < MIN_SAVE_INTERVAL:
-        return False
-
-    # Filter: bbox hasn't moved enough
-    if not (abs(prev["x1"] - x1) > BBOX_MOVEMENT_THRESHOLD or
-            abs(prev["y1"] - y1) > BBOX_MOVEMENT_THRESHOLD or
-            abs(prev["x2"] - x2) > BBOX_MOVEMENT_THRESHOLD or
-            abs(prev["y2"] - y2) > BBOX_MOVEMENT_THRESHOLD):
-        return False
-
-    detection_tracker[key] = {"timestamp": timestamp, "x1": x1, "y1": y1, "x2": x2, "y2": y2}
-    return True
-
+    
 def _get_zone_ids(
     detections: sv.Detections,
     zone_polygons: List[Tuple[Zone, sv.PolygonZone]],
@@ -209,33 +207,19 @@ def _persist_detections(
     det_zone_ids = _get_zone_ids(tracked, zone_polygons, source)
     dt = datetime.utcfromtimestamp(timestamp)
     detections_to_add = {}
-
+    
     for i in range(len(tracked)):
         x1, y1, x2, y2 = tracked.xyxy[i]
-
-        confidence = float(tracked.confidence[i]) if tracked.confidence is not None else 1.0
+        
+        confidence = float(tracked.confidence[i]) if tracked.confidence is not None else 1.0 # ?
         tracker_id = int(tracked.tracker_id[i]) if tracked.tracker_id is not None else None
 
         # Filter duplicate/noise
-        if not _detection_passes_filters(source.id, class_name, tracker_id, timestamp, x1, y1, x2, y2):
+        if not _detection_passes_filters(class_name, tracker_id, timestamp, x1, y1, x2, y2):
             continue
-
+        
         # Create detection
         cx, cy = (x1 + x2) / 2.0, (y1 + y2) / 2.0
-        zone_id_for_det = det_zone_ids[i]
-
-        # Resolve global_id for cross-camera deduplication
-        gid: Optional[int] = None
-        if zone_id_for_det is not None:
-            mzid = _zone_mapped_zone.get(zone_id_for_det)
-            if mzid is not None:
-                with _global_id_lock:
-                    global _global_id_counter
-                    if mzid not in _mapped_zone_global_ids:
-                        _global_id_counter += 1
-                        _mapped_zone_global_ids[mzid] = _global_id_counter
-                    gid = _mapped_zone_global_ids[mzid]
-
         det_row = Detection(
             camera_id=source.id,
             timestamp=dt,
@@ -248,13 +232,12 @@ def _persist_detections(
             bbox_width=x2 - x1,
             bbox_height=y2 - y1,
             bbox_area=(x2 - x1) * (y2 - y1),
-            zone_id=zone_id_for_det,
-            global_id=gid,
+            zone_id=det_zone_ids[i],
         )
         detections_to_add[det_row] = None
-
+        
         # Handle zone occupancy
-        zone_id = zone_id_for_det
+        zone_id = det_zone_ids[i]
         if zone_id is not None:
             # Track live tracker IDs per zone
             if zone_id not in live_tracker_ids:
@@ -293,17 +276,17 @@ def _persist_detections(
                         zone_id=zone_id,
                         tracker_id=tracker_id,
                     )
-
+                
                 # Update last seen timestamp
                 if state["tracker_id"] == tracker_id:
                     state["last_seen_timestamp"] = timestamp
                     state["last_detection"] = det_row
-
+    
     # Save to DB
     for det_row in detections_to_add:
         db.add(det_row)
     db.flush()
-
+    
     for det_row, zone_occ in detections_to_add.items():
         if zone_occ is not None:
             zone_occ.detection_id = det_row.id
