@@ -18,13 +18,9 @@ Grid layout with files_per_row=2:
     logical row 1: [file 0 →][← file 1]
 
 """
-import ast
-import argparse
-import json
+
 import os
-import re
 import sys
-from pathlib import Path
 import requests
 import streamlit as st
 import cv2

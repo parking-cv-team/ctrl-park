@@ -1,5 +1,3 @@
-from unittest import result
-
 from fastapi import FastAPI, HTTPException, Response, Body
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -7,12 +5,10 @@ import os
 from dotenv import load_dotenv
 from db import init_db, SessionLocal, CameraSource, Zone, ZoneOccupancy, MappedZone
 from db.models import Detection
-from datetime import datetime, timedelta, timezone
 from sqlalchemy import func, distinct, text
 import numpy as np
 from typing import List
 from pathlib import Path
-from typing import Any, Dict
 import json
 import pandas as pd
 import matplotlib
@@ -22,7 +18,6 @@ import base64
 from scipy.ndimage import gaussian_filter
 from fastapi import Depends
 from sqlalchemy.orm import Session
-from flask import request
 from processing.merge_cameras import estimate_transforms,compute_global_transforms,ensure_topdown,save_merged_topdown,polygon_iou,_canonical_quad
 from processing.merge_cameras import apply_affine_pts
 
@@ -1113,3 +1108,8 @@ def save_merge_to_db(step_results: list, cam_data_list: list,
         return n_saved
     finally:
         pass
+
+
+def start_pipe_line(uri:str):
+
+    pass

@@ -11,8 +11,6 @@ import json
 from datetime import datetime, timedelta
 import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
-import numpy as np
-import time
 from multiprocessing import Process
 from dashboard.calbrate_camera import run_zone_creator
 import matplotlib.dates as mdates
@@ -78,9 +76,9 @@ def camera_selected():
 
         st.success(f"You confirmed: {st.session_state.confirmed_camera['name']}")
 
-        tab_overview, tab_kpis, tab_tracking, tab_reports, tab_3d = st.tabs(
+        tab_overview, tab_kpis, tab_tracking, tab_reports, tab_3d, map_2d = st.tabs(
             [
-                "Overview", "KPIs", "Tracking", "Reports", "3D Simulation"
+                "Overview", "KPIs", "Tracking", "Reports", "3D Simulation", "2D map"
             ]
         )
         with tab_overview:
@@ -134,6 +132,11 @@ def camera_selected():
                 singlecamera = True
             if mapped_zones:
                 display_3d_viewer(mapped_zones, single_camera=singlecamera)
+        with map_2d:
+            
+            
+            
+            pass
 
 
     else:

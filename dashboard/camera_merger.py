@@ -13,11 +13,8 @@ Usage:
 """
 import requests
 
-import argparse
-import json
 import os
 import sys
-from pathlib import Path
 
 # Disable GStreamer before cv2 is imported — it crashes on VideoCapture on some systems
 os.environ.setdefault("OPENCV_VIDEOIO_PRIORITY_GSTREAMER", "0")
