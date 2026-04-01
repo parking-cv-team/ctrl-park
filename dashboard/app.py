@@ -127,16 +127,11 @@ def camera_selected():
             mapped_zones = get_mapped_zones()
             singlecamera = False
             if not mapped_zones:
-                # st.warning("No mapped zones found. Attempting single camera mode")
-                mapped_zones = get_mapped_zones(True)
+                st.warning("No mapped zones found. Attempting single camera mode")
+                mapped_zones = get_mapped_zones(camera['id'], True)
                 singlecamera = True
             if mapped_zones:
-                display_3d_viewer(mapped_zones, single_camera=singlecamera)
-        with map_2d:
-            
-            
-            
-            pass
+                display_3d_viewer(camera['id'], mapped_zones, single_camera=singlecamera)
 
 
     else:
@@ -149,7 +144,6 @@ def safe_metric(widget, label, value_fn):
         widget.metric(label, value_fn())
     except Exception as e:
         widget.metric(label, "N/A")
-        print(e)
 
 @st.fragment(run_every=5)  
 def request_kpis_live(camera_id):
@@ -493,7 +487,7 @@ def camera_form():
     
 
 
-def display_3d_viewer(zones, single_camera):
+def display_3d_viewer(camera_id, zones, single_camera):
     """Load and display the 3D viewer with zone data from database."""
     st.write("## 3D Parking Lot Viewer")
     st.markdown("In this part you will be able to interact with a 3D simulation of the parking lots")
@@ -519,6 +513,7 @@ def display_3d_viewer(zones, single_camera):
     window.zonesDataFromPython = {zones_json};
     window.API_BASE = "{API_BASE}";
     window.SINGLE_CAMERA_MODE = {'true' if single_camera else 'false'};
+    window.CAMERA_ID = {camera_id};
     </script>
     """
     html_code = html_code.replace("<body>", inject_script + "<body>")
@@ -526,10 +521,11 @@ def display_3d_viewer(zones, single_camera):
     components.html(html_code, height=700)
 
 
-def get_mapped_zones(single_camera=False):
+def get_mapped_zones(camera_id=0, single_camera=False):
     url = f"{API_BASE}/mapped_zones/poly"
     if single_camera:
-        url += "?single_camera=true"
+        url += f"?single_camera=true&camera_id={camera_id}"
+
     r = requests.get(url)
 
     if r.status_code == 200:
@@ -543,12 +539,54 @@ def get_mapped_zones(single_camera=False):
 def merge():
     st.markdown("## Merge Parking lots")
     st.markdown("Press the button below to merge the designed parking lots so far")
-
     if st.button(label="Merge...", type="primary"):
         pippi = Process(target=merge_cameras, daemon=True)
         pippi.start()
         pippi.join()
+        st.session_state.has_been_merged = True
 
+
+def been_merged():
+    try:
+        pass
+        r= requests.get(f"{API_BASE}/merged")
+        return r.json()
+    except:
+        pass
+    return False
+
+def ping(e):
+    try:
+        requests.get(f"{API_BASE}/ping",params={"e":e})
+    except:
+        pass
+
+def start_pipeline():
+    try:
+        r = requests.post(f"{API_BASE}/start/pipeline")
+        r = r.json()
+        st.write(f"{r["status"]} with {r["streams"]} streams")
+        
+    except Exception as e:
+        ping(e)
+        st.error("something has gone wrong starting the pipeline")
+        return
+    st.session_state.pipeline_started = True
+    st.rerun()
+
+
+def has_pipeline_started():
+    
+    try:
+        r = requests.get(f"{API_BASE}/analytics/recent")
+        r = r.json()
+        ping(len(r) != 0)
+        return len(r) != 0
+    except Exception as e:
+        ping(e)
+        pass
+    
+    return False
 
 def body():
     st.title("Ctrl+Park Dashboard")
@@ -560,9 +598,18 @@ def body():
         st.session_state.show_zones = False
     if "show_tracking_map" not in st.session_state:
         st.session_state.show_tracking_map = False
-    camera_form()
+    if "has_been_merged" not in st.session_state:
+        st.session_state.has_been_merged = been_merged()
+    if "pipeline_started" not in st.session_state:
+        st.session_state.pipeline_started = has_pipeline_started()
+    
+    if not st.session_state.pipeline_started:
+        camera_form()
 
-    merge()
+        merge()
+    if st.session_state.has_been_merged and not st.session_state.pipeline_started:
+        if st.button(label="START PIPELINE", type="primary"):
+            start_pipeline()
 
     camera_button()
 

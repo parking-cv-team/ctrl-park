@@ -758,6 +758,8 @@ class MergeUI:
 
 
 def save_merge(step_results,selected_ids):
+
+    
     data = {
         "step_results":step_results,
         "selected_ids":selected_ids
@@ -812,4 +814,4 @@ def merge_cameras(recalibrate = False):
     ui = MergeUI(cam_views)
     step_results = ui.run()
 
-    save_merge(step_results,cam_data_list)
+    save_merge(step_results,selected_ids)

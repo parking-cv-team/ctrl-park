@@ -1,3 +1,6 @@
+from unittest import result
+
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Response, Body
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -27,7 +30,19 @@ import io
 
 load_dotenv()
 
-app = FastAPI(title="Ctrl+Park API")
+_pipeline_proc = None
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    yield
+    if _pipeline_proc and _pipeline_proc.poll() is None:
+        _pipeline_proc.terminate()
+        try:
+            _pipeline_proc.wait(timeout=5)
+        except Exception:
+            _pipeline_proc.kill()
+
+app = FastAPI(title="Ctrl+Park API", lifespan=lifespan)
 
 # Add CORS middleware to allow requests from Streamlit and other origins
 app.add_middleware(
@@ -300,8 +315,6 @@ def trajectory_analysis(body: TrajectoryRequest, db: Session = Depends(get_db)):
 
     # plot 2d histogram
 
-    print(ax.get_xlim(), ax.get_ylim())
-
     h, xe1, ye1 = np.histogram2d(
         df_cars_parked["cx"],
         df_cars_parked["cy"],
@@ -509,8 +522,6 @@ def metrics_report_kpi(camera_id, t_start, t_end, db: Session = Depends(get_db))
         "n_tracked_det": pd.DataFrame(n_tracked_detect).to_dict(orient="records"),
     }
 
-    print(to_ret)
-
     return to_ret
 
 
@@ -588,7 +599,7 @@ def zones_from_cameras(camera_id, limit=50, db: Session = Depends(get_db)):
 
 
 @app.get("/mapped_zones/poly")
-def mapped_zones(single_camera: bool = False, db: Session = Depends(get_db)):
+def mapped_zones(camera_id: int = 0, single_camera: bool = False, db: Session = Depends(get_db)):
     if not single_camera:
         items = db.query(MappedZone).all()
     else:
@@ -597,14 +608,17 @@ def mapped_zones(single_camera: bool = False, db: Session = Depends(get_db)):
                 "id": zone.id,
                 "polygon_global_metric": zone.polygon_metric,
             }
-            for zone in db.query(Zone).all()
+            for zone in db.query(Zone).filter(Zone.camera_id == camera_id).all()
         ]
 
     return items
 
 
 @app.get("/mapped_zones/status")
-def get_mapped_zones_status(single_camera: bool = False, db: Session = Depends(get_db)):
+def get_mapped_zones_status(camera_id: int = 0, single_camera: bool = False, db: Session = Depends(get_db)):
+    print(camera_id, single_camera)
+    camera_id = int(camera_id)
+
     if not single_camera:
         all_mapped_zones = db.query(MappedZone).all()
     else:
@@ -615,7 +629,7 @@ def get_mapped_zones_status(single_camera: bool = False, db: Session = Depends(g
                     "polygon_global_metric": zone.polygon_metric,
                 }
             )
-            for zone in db.query(Zone).all()
+            for zone in db.query(Zone).filter(Zone.camera_id == camera_id).all()
         ]
 
     result = []
@@ -917,12 +931,13 @@ class MergeSaveData(BaseModel):
 
 @app.post("/merge/save")
 def save_merge(data: MergeSaveData):
-    
+    print(isinstance(data,MergeSaveData))
     selected_ids = data.selected_ids
     step_results = data.step_results
     _,output_dir = get_config_paths()
     topdown_path= output_dir / "merged_topdown.png"
-    cam_data_list = get_selected_Camera_data(selected_ids)
+    db = next(get_db())
+    cam_data_list = get_selected_Camera_data(SelectedIds(selected_ids=selected_ids), db)
     n = len(cam_data_list)
 
     if n == 1:
@@ -952,7 +967,8 @@ def save_merge(data: MergeSaveData):
     # ------------------------------------------------------------------
     # Save merge results to DB
     # ------------------------------------------------------------------
-    save_merge_to_db(step_results, cam_data_list, global_transforms)
+    db = next(get_db())
+    save_merge_to_db(step_results, cam_data_list, global_transforms,db)
 
 
 
@@ -1109,7 +1125,21 @@ def save_merge_to_db(step_results: list, cam_data_list: list,
     finally:
         pass
 
+@app.post("/start/pipeline")
+def start_pipe_line(db: Session =Depends(get_db)):
+    global _pipeline_proc
+    import subprocess
+    import sys
+    cams = db.query(CameraSource).all()
+    videos  = [c.uri for c in cams]
+    cmd = [sys.executable, "-m", "processing.run"]
+    if videos:
+        cmd += ["--video"] + videos
+    _pipeline_proc = subprocess.Popen(cmd, cwd=Path(__file__).parent.parent)
+    return {"status": "pipeline started", "streams": len(videos) if videos else 1}
 
-def start_pipe_line(uri:str):
-
-    pass
+@app.get("/merged")
+def has_been_merged():
+    _,output_dir = get_config_paths()
+    topdown_path= output_dir / "merged_topdown.png"
+    return os.path.exists(topdown_path)
