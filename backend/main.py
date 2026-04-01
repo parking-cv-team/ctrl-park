@@ -1139,7 +1139,7 @@ def start_pipe_line(db: Session =Depends(get_db)):
     return {"status": "pipeline started", "streams": len(videos) if videos else 1}
 
 @app.get("/merged")
-def has_been_merged():
-    _,output_dir = get_config_paths()
-    topdown_path= output_dir / "merged_topdown.png"
-    return os.path.exists(topdown_path)
+def has_been_merged(db: Session = Depends(get_db)):
+    r=db.query(func.count(MappedZone))
+
+    return r!=0
