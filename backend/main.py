@@ -8,12 +8,10 @@ import os
 from dotenv import load_dotenv
 from db import init_db, SessionLocal, CameraSource, Zone, ZoneOccupancy, MappedZone
 from db.models import Detection
-from datetime import datetime, timedelta, timezone
 from sqlalchemy import func, distinct, text
 import numpy as np
 from typing import List
 from pathlib import Path
-from typing import Any, Dict
 import json
 import pandas as pd
 import matplotlib
@@ -23,7 +21,6 @@ import base64
 from scipy.ndimage import gaussian_filter
 from fastapi import Depends
 from sqlalchemy.orm import Session
-
 from processing.merge_cameras import estimate_transforms,compute_global_transforms,ensure_topdown,save_merged_topdown,polygon_iou,_canonical_quad
 from processing.merge_cameras import apply_affine_pts
 

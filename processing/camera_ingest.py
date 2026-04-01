@@ -25,7 +25,6 @@ def get_parking_zones(uri):
         )
 
         run_calibration(uri)
-        return None 
 
     if not zone_config.zones:
         print(
@@ -34,8 +33,10 @@ def get_parking_zones(uri):
             f"                  python -m processing.calibrate_parking --uri {uri}"
         )
         run_calibration(uri)
+    try:
+        zone_config: CameraSource = _load_zone_config_from_db(source=uri)
+    except:
         return None
-
     return zone_config.zones
 
 
