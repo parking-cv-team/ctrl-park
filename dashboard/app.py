@@ -17,6 +17,8 @@ from multiprocessing import Process
 from dashboard.calbrate_camera import run_zone_creator
 import matplotlib.dates as mdates
 import subprocess
+from dashboard.camera_merger import merge_cameras
+
 
 # current dashboard structure:
 #
@@ -478,7 +480,7 @@ def camera_form():
             try:
                 
                 st.session_state.camera_name = name
-                pippo = Process(target=run_zone_creator, args=(RTSP_URL,st.session_state.camera_name), daemon=True)
+                pippo = Process(target=run_zone_creator, args=(st.session_state.camera_name,uri), daemon=True)
                 pippo.start()
                 pippo.join()
                 st.success("The camera is being registered")
@@ -540,7 +542,9 @@ def merge():
     st.markdown("Press the button below to merge the designed parking lots so far")
 
     if st.button(label="Merge...", type="primary"):
-        pass # TODO: IMPLEMENT MERGING LOGIC
+        pippi = Process(target=merge_cameras, daemon=True)
+        pippi.start()
+        pippi.join()
 
 
 def body():
