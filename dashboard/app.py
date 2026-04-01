@@ -541,12 +541,53 @@ def get_mapped_zones(camera_id=0, single_camera=False):
 def merge():
     st.markdown("## Merge Parking lots")
     st.markdown("Press the button below to merge the designed parking lots so far")
-
     if st.button(label="Merge...", type="primary"):
         pippi = Process(target=merge_cameras, daemon=True)
         pippi.start()
         pippi.join()
+        st.session_state.has_been_merged = True
 
+
+def been_merged():
+    try:
+        pass
+        r= requests.get(f"{API_BASE}/merged")
+        return r.json()
+    except:
+        pass
+    return False
+
+def ping(e):
+    try:
+        requests.get(f"{API_BASE}/ping",params={"e":e})
+    except:
+        pass
+
+def start_pipeline():
+    try:
+        r = requests.post(f"{API_BASE}/start/pipeline")
+        r = r.json()
+        st.write(f"{r["status"]} with {r["streams"]} streams")
+        st.rerun()
+    except Exception as e:
+        ping(e)
+        st.error("something has gone wrong starting the pipeline")
+        return
+    st.session_state.pipeline_started = True
+
+
+def has_pipeline_started():
+    
+    try:
+        r = requests.get(f"{API_BASE}/analytics/recent")
+        r = r.json()
+        ping(len(r) != 0)
+        return len(r) != 0
+    except Exception as e:
+        ping(e)
+        pass
+    
+    return False
 
 def body():
     st.title("Ctrl+Park Dashboard")
@@ -558,9 +599,18 @@ def body():
         st.session_state.show_zones = False
     if "show_tracking_map" not in st.session_state:
         st.session_state.show_tracking_map = False
-    camera_form()
+    if "has_been_merged" not in st.session_state:
+        st.session_state.has_been_merged = been_merged()
+    if "pipeline_started" not in st.session_state:
+        st.session_state.pipeline_started = has_pipeline_started()
+    
+    if not st.session_state.pipeline_started:
+        camera_form()
 
-    merge()
+        merge()
+    if st.session_state.has_been_merged and not st.session_state.pipeline_started:
+        if st.button(label="START PIPELINE", type="primary"):
+            start_pipeline()
 
     camera_button()
 
