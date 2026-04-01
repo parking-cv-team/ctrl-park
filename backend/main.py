@@ -23,7 +23,7 @@ from scipy.ndimage import gaussian_filter
 from fastapi import Depends
 
 from flask import request
-from processing.merge_cameras import estimate_transforms,compute_global_transforms,ensure_topdown,save_merged_topdown,save_merge_to_db
+from processing.merge_cameras import estimate_transforms,compute_global_transforms,ensure_topdown,save_merged_topdown,polygon_iou,_canonical_quad
 matplotlib.use("Agg")
 
 import io
@@ -846,9 +846,9 @@ def ping(e):
 
 
 @app.get("/camera/selected_data")
-def get_selected_Camera_data(selected_ids):
+def get_selected_Camera_data(selected_ids, db: Session = Depends(get_db)):
 
-    db = SessionLocal()
+
     try:
         q = (
             db.query(CameraSource)
@@ -907,7 +907,7 @@ def get_selected_Camera_data(selected_ids):
 
         return cam_data_list
     finally:
-        db.close()
+        pass
 
 
 
@@ -954,3 +954,158 @@ def save_merge(data: MergeSaveData):
     # Save merge results to DB
     # ------------------------------------------------------------------
     save_merge_to_db(step_results, cam_data_list, global_transforms)
+
+
+
+IOU_MATCH_THRESHOLD = 0.3 
+
+def save_merge_to_db(step_results: list, cam_data_list: list,
+                     global_transforms: list, db: Session = Depends(get_db)) -> int:
+    """Auto-match all slots via IoU in global metric space, then write to DB.
+
+    Algorithm:
+      1. Clear existing mapped_zone_id for every zone of the cameras being processed.
+      2. Project each slot's polygon_metric into global metric space using global_transforms.
+      3. For every pair of cameras (i, j), find mutual best-IoU matches above
+         IOU_MATCH_THRESHOLD and feed them into Union-Find.
+      4. Every slot (matched or singleton) ends up in a group.
+      5. For each group write one MappedZone (mean global polygon) and update
+         mapped_zone_id on all member zones.
+
+    step_results is accepted for API compatibility but not used by this function;
+    the matching is driven entirely by geometry.
+    """
+    
+    # ------------------------------------------------------------------
+    # Step 1 & 2 — project all slots to global metric space
+    # ------------------------------------------------------------------
+    # global_slots[cam_idx][key] = {"slot": slot_dict, "poly_global": ndarray}
+    global_slots: dict[int, dict[str, dict]] = {}
+    all_nodes: list[tuple] = []
+    for cam_data in cam_data_list:
+        cam_idx = cam_data["cam_idx"]
+        M = global_transforms[cam_idx]
+        global_slots[cam_idx] = {}
+        for slot in cam_data["slots"]:
+            poly_local = np.array(slot["polygon_metric"], dtype=float)
+            poly_global = apply_affine_pts(M, poly_local)
+            global_slots[cam_idx][slot["key"]] = {
+                "slot": slot,
+                "poly_global": poly_global,
+            }
+            all_nodes.append((cam_idx, slot["key"]))
+
+    # ------------------------------------------------------------------
+    # Step 3 — Union-Find initialisation (every slot is its own group)
+    # ------------------------------------------------------------------
+    parent: dict = {node: node for node in all_nodes}
+
+    def find(x):
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]   # path compression (halving)
+            x = parent[x]
+        return x
+
+    def union(x, y):
+        px, py = find(x), find(y)
+        if px != py:
+            parent[px] = py
+
+    # ------------------------------------------------------------------
+    # Step 4 — Mutual best-IoU matching across every camera pair
+    # ------------------------------------------------------------------
+    cam_indices = [d["cam_idx"] for d in cam_data_list]
+    n_pairs_found = 0
+    for ii, ci in enumerate(cam_indices):
+        for cj in cam_indices[ii + 1:]:
+            items_i = list(global_slots[ci].items())   # [(key, entry), ...]
+            items_j = list(global_slots[cj].items())
+            if not items_i or not items_j:
+                continue
+
+            # best match for each slot in cam_i → cam_j
+            best_of_i: dict[str, tuple[float, str | None]] = {}
+            for ki, vi in items_i:
+                best_iou, best_kj = 0.0, None
+                for kj, vj in items_j:
+                    iou = polygon_iou(vi["poly_global"], vj["poly_global"])
+                    if iou > best_iou:
+                        best_iou, best_kj = iou, kj
+                best_of_i[ki] = (best_iou, best_kj)
+
+            # best match for each slot in cam_j → cam_i
+            best_of_j: dict[str, tuple[float, str | None]] = {}
+            for kj, vj in items_j:
+                best_iou, best_ki = 0.0, None
+                for ki, vi in items_i:
+                    iou = polygon_iou(vj["poly_global"], vi["poly_global"])
+                    if iou > best_iou:
+                        best_iou, best_ki = iou, ki
+                best_of_j[kj] = (best_iou, best_ki)
+
+            # Accept only mutual best matches above threshold
+            for ki, (iou_ij, kj) in best_of_i.items():
+                if kj is None or iou_ij < IOU_MATCH_THRESHOLD:
+                    continue
+                iou_ji, ki_back = best_of_j.get(kj, (0.0, None))
+                if ki_back == ki:   # mutual agreement
+                    union((ci, ki), (cj, kj))
+                    n_pairs_found += 1
+
+    
+    # ------------------------------------------------------------------
+    # Step 5 — Collect groups (singletons included)
+    # ------------------------------------------------------------------
+    groups: dict = {}
+    for node in all_nodes:
+        groups.setdefault(find(node), []).append(node)
+    all_groups = list(groups.values())
+
+    # ------------------------------------------------------------------
+    # Step 6 — Write to DB
+    # ------------------------------------------------------------------
+    try:
+        # Clear existing mapped_zone_id for every zone of the cameras in play
+        camera_ids = [d["camera_id"] for d in cam_data_list]
+        for cam_id in camera_ids:
+            db.query(Zone).filter(Zone.camera_id == cam_id).update(
+                {"mapped_zone_id": None}, synchronize_session=False
+            )
+        db.flush()
+
+        n_saved = 0
+        for group in all_groups:
+            polygons = []
+            zone_ids = []
+            for cam_idx, slot_key in group:
+                entry = global_slots.get(cam_idx, {}).get(slot_key)
+                if entry is None:
+                    continue
+                polygons.append(entry["poly_global"])
+                zone_ids.append(entry["slot"]["zone_id"])
+
+            if not polygons:
+                continue
+
+            # Canonicalize vertex order (TL→TR→BR→BL) before averaging so that
+            # vertex[i] of cam-A's polygon corresponds to vertex[i] of cam-B's.
+            canonical = [_canonical_quad(p) for p in polygons]
+            mean_poly = np.mean(canonical, axis=0).tolist()
+            mz = MappedZone(polygon_global_metric=mean_poly)
+            db.add(mz)
+            db.flush()
+
+            for zid in zone_ids:
+                z = db.query(Zone).filter(Zone.id == zid).first()
+                if z:
+                    z.mapped_zone_id = mz.id
+
+            n_saved += 1
+
+        db.commit()
+        n_multi = sum(1 for g in all_groups if len(g) > 1)
+        print(f"[merge_cameras] DB: {n_saved} MappedZone(s) written "
+              f"({n_multi} multi-camera, {n_saved - n_multi} singleton)")
+        return n_saved
+    finally:
+        pass

@@ -542,7 +542,9 @@ def merge():
     st.markdown("Press the button below to merge the designed parking lots so far")
 
     if st.button(label="Merge...", type="primary"):
-        pass # TODO: IMPLEMENT MERGING LOGIC
+        pippi = Process(target=merge_cameras, daemon=True)
+        pippi.start()
+        pippi.join()
 
 
 def body():
