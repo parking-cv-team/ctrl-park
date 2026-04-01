@@ -305,8 +305,6 @@ def trajectory_analysis(body: TrajectoryRequest, db: Session = Depends(get_db)):
 
     # plot 2d histogram
 
-    print(ax.get_xlim(), ax.get_ylim())
-
     h, xe1, ye1 = np.histogram2d(
         df_cars_parked["cx"],
         df_cars_parked["cy"],
@@ -514,8 +512,6 @@ def metrics_report_kpi(camera_id, t_start, t_end, db: Session = Depends(get_db))
         "n_tracked_det": pd.DataFrame(n_tracked_detect).to_dict(orient="records"),
     }
 
-    print(to_ret)
-
     return to_ret
 
 
@@ -593,7 +589,7 @@ def zones_from_cameras(camera_id, limit=50, db: Session = Depends(get_db)):
 
 
 @app.get("/mapped_zones/poly")
-def mapped_zones(single_camera: bool = False, db: Session = Depends(get_db)):
+def mapped_zones(camera_id: int = 0, single_camera: bool = False, db: Session = Depends(get_db)):
     if not single_camera:
         items = db.query(MappedZone).all()
     else:
@@ -602,14 +598,17 @@ def mapped_zones(single_camera: bool = False, db: Session = Depends(get_db)):
                 "id": zone.id,
                 "polygon_global_metric": zone.polygon_metric,
             }
-            for zone in db.query(Zone).all()
+            for zone in db.query(Zone).filter(Zone.camera_id == camera_id).all()
         ]
 
     return items
 
 
 @app.get("/mapped_zones/status")
-def get_mapped_zones_status(single_camera: bool = False, db: Session = Depends(get_db)):
+def get_mapped_zones_status(camera_id: int = 0, single_camera: bool = False, db: Session = Depends(get_db)):
+    print(camera_id, single_camera)
+    camera_id = int(camera_id)
+
     if not single_camera:
         all_mapped_zones = db.query(MappedZone).all()
     else:
@@ -620,7 +619,7 @@ def get_mapped_zones_status(single_camera: bool = False, db: Session = Depends(g
                     "polygon_global_metric": zone.polygon_metric,
                 }
             )
-            for zone in db.query(Zone).all()
+            for zone in db.query(Zone).filter(Zone.camera_id == camera_id).all()
         ]
 
     result = []
