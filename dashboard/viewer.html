@@ -357,7 +357,7 @@
                 try {
                     const apiUrl = window.API_BASE || "http://localhost:8000";
                     const response = await fetch(
-                        `${apiUrl}/mapped_zones/status` + (window.SINGLE_CAMERA_MODE ? "?single_camera=true" : "")+ "&camera_id=" + (window.CAMERA_ID),
+                        `${apiUrl}/mapped_zones/status` +"?" + (window.SINGLE_CAMERA_MODE ? "single_camera=true" : "")+ "&camera_id=" + (window.CAMERA_ID),
                     );
                     if (!response.ok) {
                         console.error(
